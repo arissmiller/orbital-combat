@@ -1,0 +1,77 @@
+.audio-sandbox {
+  position: fixed;
+  left: 18px;
+  bottom: 18px;
+  z-index: 40;
+  width: min(340px, calc(100vw - 36px));
+  padding: 14px;
+  border-radius: 16px;
+  border: 1px solid rgba(142, 232, 255, 0.24);
+  background: rgba(8, 14, 24, 0.9);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.28);
+  pointer-events: auto;
+  font-family: "Menlo", "Monaco", monospace;
+  color: #e7f9ff;
+}
+
+.audio-sandbox__title {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.audio-sandbox__meta,
+.audio-sandbox__status,
+.audio-sandbox__detail {
+  margin-top: 4px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #a8c8d6;
+}
+
+.audio-sandbox__list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.audio-sandbox__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.audio-sandbox__copy {
+  min-width: 0;
+}
+
+.audio-sandbox__label {
+  font-size: 12px;
+  color: #f3fbff;
+}
+
+.audio-sandbox__button {
+  appearance: none;
+  border: 1px solid rgba(142, 232, 255, 0.3);
+  border-radius: 10px;
+  background: rgba(14, 34, 52, 0.92);
+  color: #dff7ff;
+  font: inherit;
+  font-size: 11px;
+  line-height: 1;
+  padding: 8px 12px;
+  cursor: pointer;
+}
+
+.audio-sandbox__button:hover {
+  border-color: rgba(142, 232, 255, 0.48);
+  background: rgba(18, 46, 68, 0.96);
+}
+
+.audio-sandbox__button--all {
+  margin-top: 12px;
+  width: 100%;
+}

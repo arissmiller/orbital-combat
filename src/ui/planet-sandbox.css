@@ -1,0 +1,272 @@
+.planet-sandbox-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 45;
+  padding: 14px;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition:
+    opacity 180ms ease,
+    visibility 180ms ease;
+}
+
+.planet-sandbox-overlay--open {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+}
+
+.planet-sandbox {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  border: 1px solid rgba(168, 223, 255, 0.18);
+  border-radius: 20px;
+  background:
+    radial-gradient(circle at 18% 18%, rgba(35, 77, 120, 0.2), transparent 24%),
+    radial-gradient(circle at 82% 24%, rgba(86, 165, 208, 0.1), transparent 18%),
+    linear-gradient(180deg, rgba(7, 13, 20, 0.96), rgba(4, 8, 13, 0.98));
+  box-shadow: 0 28px 64px rgba(0, 0, 0, 0.4);
+  font-family: "Menlo", "Monaco", monospace;
+  color: #eef9ff;
+}
+
+.planet-sandbox__header {
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
+  align-items: flex-start;
+  padding: 18px 20px 16px;
+  border-bottom: 1px solid rgba(168, 223, 255, 0.12);
+}
+
+.planet-sandbox__header-actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.planet-sandbox__title {
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.planet-sandbox__meta,
+.planet-sandbox__field-label,
+.planet-sandbox__workspace-meta,
+.planet-sandbox__caption,
+.planet-sandbox__preview-label {
+  font-size: 11px;
+  line-height: 1.5;
+  color: #a9c7d8;
+}
+
+.planet-sandbox__body {
+  display: grid;
+  grid-template-columns: minmax(280px, 320px) minmax(0, 1fr);
+  min-height: 0;
+}
+
+.planet-sandbox__sidebar {
+  min-height: 0;
+  overflow: auto;
+  padding: 18px;
+  border-right: 1px solid rgba(168, 223, 255, 0.1);
+  background: linear-gradient(180deg, rgba(8, 14, 22, 0.78), rgba(7, 12, 18, 0.62));
+}
+
+.planet-sandbox__section + .planet-sandbox__section {
+  margin-top: 18px;
+}
+
+.planet-sandbox__section {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid rgba(164, 225, 255, 0.12);
+  border-radius: 16px;
+  background: rgba(10, 19, 30, 0.52);
+}
+
+.planet-sandbox__section-title,
+.planet-sandbox__workspace-title {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #effbff;
+}
+
+.planet-sandbox__workspace {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-height: 0;
+  padding: 18px;
+  gap: 14px;
+}
+
+.planet-sandbox__workspace-header {
+  display: grid;
+  gap: 6px;
+}
+
+.planet-sandbox__preview-shell {
+  position: relative;
+  min-height: 0;
+  border-radius: 18px;
+  overflow: hidden;
+  border: 1px solid rgba(168, 223, 255, 0.14);
+  background:
+    radial-gradient(circle at 24% 34%, rgba(31, 74, 110, 0.2), transparent 24%),
+    radial-gradient(circle at 84% 22%, rgba(137, 214, 255, 0.08), transparent 18%),
+    linear-gradient(180deg, rgba(7, 16, 26, 0.96), rgba(3, 6, 11, 0.99));
+}
+
+.planet-sandbox__preview {
+  width: 100%;
+  height: 100%;
+  min-height: 420px;
+}
+
+.planet-sandbox__preview canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.planet-sandbox__preview-stack {
+  position: absolute;
+  top: 72px;
+  right: 28px;
+  display: grid;
+  gap: clamp(120px, 24vh, 180px);
+  pointer-events: none;
+}
+
+.planet-sandbox__preview-label {
+  padding: 5px 9px;
+  border-radius: 999px;
+  background: rgba(5, 12, 18, 0.72);
+  border: 1px solid rgba(169, 224, 255, 0.12);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.planet-sandbox__caption {
+  position: absolute;
+  left: 18px;
+  right: 18px;
+  bottom: 16px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(5, 12, 18, 0.64);
+  border: 1px solid rgba(169, 224, 255, 0.1);
+  pointer-events: none;
+}
+
+.planet-sandbox__controls,
+.planet-sandbox__field {
+  display: grid;
+  gap: 6px;
+}
+
+.planet-sandbox__inline {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.planet-sandbox__toggle {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  font-size: 11px;
+  color: #dff3ff;
+}
+
+.planet-sandbox__toggle input {
+  accent-color: #8ee8ff;
+}
+
+.planet-sandbox__select,
+.planet-sandbox__input,
+.planet-sandbox__button,
+.planet-sandbox__color {
+  appearance: none;
+  border: 1px solid rgba(164, 225, 255, 0.22);
+  border-radius: 10px;
+  background: rgba(12, 26, 42, 0.92);
+  color: #e6f7ff;
+  font: inherit;
+}
+
+.planet-sandbox__select,
+.planet-sandbox__input {
+  width: 100%;
+  padding: 9px 10px;
+  font-size: 11px;
+}
+
+.planet-sandbox__select,
+.planet-sandbox__button,
+.planet-sandbox__color {
+  cursor: pointer;
+}
+
+.planet-sandbox__button {
+  flex: 0 0 auto;
+  padding: 9px 12px;
+  font-size: 11px;
+}
+
+.planet-sandbox__button:hover,
+.planet-sandbox__select:hover,
+.planet-sandbox__input:hover,
+.planet-sandbox__color:hover {
+  border-color: rgba(164, 225, 255, 0.36);
+  background: rgba(16, 34, 56, 0.96);
+}
+
+.planet-sandbox__color {
+  width: 44px;
+  min-width: 44px;
+  height: 34px;
+  padding: 4px;
+}
+
+.planet-sandbox__range {
+  width: 100%;
+  accent-color: #8ee8ff;
+}
+
+@media (max-width: 980px) {
+  .planet-sandbox-overlay {
+    padding: 10px;
+  }
+
+  .planet-sandbox__body {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  .planet-sandbox__sidebar {
+    border-right: none;
+    border-bottom: 1px solid rgba(168, 223, 255, 0.1);
+    max-height: 42vh;
+  }
+
+  .planet-sandbox__preview {
+    min-height: 340px;
+  }
+
+  .planet-sandbox__preview-stack {
+    top: 58px;
+    right: 18px;
+    gap: 88px;
+  }
+}

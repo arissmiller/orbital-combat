@@ -1,0 +1,88 @@
+:root {
+  color: #f2f5f7;
+  background:
+    radial-gradient(circle at 18% 16%, rgba(105, 156, 255, 0.22) 0%, rgba(105, 156, 255, 0) 28%),
+    radial-gradient(circle at 82% 20%, rgba(255, 178, 115, 0.12) 0%, rgba(255, 178, 115, 0) 22%),
+    radial-gradient(circle at 50% 115%, rgba(35, 76, 144, 0.28) 0%, rgba(35, 76, 144, 0) 42%),
+    linear-gradient(180deg, #07111c 0%, #04070f 55%, #020409 100%);
+  font-family: "Avenir Next", "Segoe UI", sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  margin: 0;
+  min-height: 100%;
+  width: 100%;
+}
+
+body {
+  min-height: 100vh;
+  overflow: hidden;
+  position: relative;
+  background:
+    radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.03) 0%, rgba(255, 255, 255, 0) 62%),
+    linear-gradient(180deg, rgba(6, 10, 18, 0.18) 0%, rgba(3, 5, 9, 0.44) 100%);
+}
+
+body::before,
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+}
+
+body::before {
+  background-image:
+    radial-gradient(circle at 12% 24%, rgba(255, 255, 255, 0.95) 0 1px, transparent 1.5px),
+    radial-gradient(circle at 26% 72%, rgba(173, 215, 255, 0.75) 0 1px, transparent 1.6px),
+    radial-gradient(circle at 38% 18%, rgba(255, 255, 255, 0.8) 0 1.2px, transparent 1.8px),
+    radial-gradient(circle at 54% 56%, rgba(255, 235, 194, 0.72) 0 1px, transparent 1.5px),
+    radial-gradient(circle at 67% 31%, rgba(255, 255, 255, 0.9) 0 1.1px, transparent 1.7px),
+    radial-gradient(circle at 79% 68%, rgba(171, 203, 255, 0.8) 0 1px, transparent 1.6px),
+    radial-gradient(circle at 91% 16%, rgba(255, 255, 255, 0.85) 0 1.1px, transparent 1.7px),
+    radial-gradient(circle at 17% 89%, rgba(255, 211, 167, 0.72) 0 1px, transparent 1.5px),
+    radial-gradient(circle at 72% 86%, rgba(255, 255, 255, 0.88) 0 1.2px, transparent 1.8px);
+  opacity: 0.85;
+}
+
+body::after {
+  background:
+    radial-gradient(circle at 24% 28%, rgba(57, 108, 214, 0.18) 0%, rgba(57, 108, 214, 0) 20%),
+    radial-gradient(circle at 76% 38%, rgba(96, 52, 143, 0.12) 0%, rgba(96, 52, 143, 0) 18%),
+    radial-gradient(circle at 62% 78%, rgba(28, 131, 138, 0.12) 0%, rgba(28, 131, 138, 0) 22%);
+  mix-blend-mode: screen;
+  opacity: 0.8;
+  animation: celestial-drift 26s ease-in-out infinite alternate;
+}
+
+#app {
+  display: grid;
+  place-items: stretch;
+  position: relative;
+  isolation: isolate;
+}
+
+canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+@keyframes celestial-drift {
+  from {
+    transform: scale(1) translate3d(0, 0, 0);
+  }
+
+  to {
+    transform: scale(1.04) translate3d(-1.5%, 1%, 0);
+  }
+}
