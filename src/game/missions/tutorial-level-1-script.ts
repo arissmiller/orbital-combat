@@ -48,11 +48,11 @@ export const TUTORIAL_LEVEL_1_STEP_COPY: Record<string, TutorialStepCopy> = {
     instruction: "Use a boosted burn and compare the stronger forecast with your normal burn line.",
   },
   "climb-burn": {
-    label: "Climb Maneuver",
+    label: "Climb Maneuver [SPACE]",
     instruction: "Execute a climb to move into a higher lane and create space. [SPACE]",
   },
   "dive-burn": {
-    label: "Dive Maneuver",
+    label: "Dive Maneuver [C]",
     instruction: "Execute a dive to recover timing and speed on your current route. [C]",
   },
   "fundamentals-marker-1": {

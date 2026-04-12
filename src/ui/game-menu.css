@@ -255,6 +255,15 @@
   letter-spacing: 0.01em;
 }
 
+.game-menu__github-link {
+  position: absolute;
+  left: 50%;
+  bottom: max(16px, env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  pointer-events: auto;
+  z-index: 1;
+}
+
 @media (max-width: 920px) {
   .game-menu {
     padding: 18px;
