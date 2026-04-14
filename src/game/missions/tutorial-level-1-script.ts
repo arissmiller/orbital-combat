@@ -11,18 +11,21 @@ export const TUTORIAL_LEVEL_1_BRIEFING_PAGES: readonly MissionBriefingPage[] = [
     body:
       "The blue line is your projected coast path.\nUse it to evaluate where your ship is going before you commit to a burn.",
     imageLabel: "Trajectory View",
+    viewId: "trajectory-view",
   },
   {
     title: "Shape, Then Commit",
     body:
       "Short, deliberate corrections are more stable than long panic burns.\nThe objective is controlled trajectory quality, not constant thrust.\n- [W] prograde burn\n- [S] retrograde burn\n- [A] / [D] lateral burn\n- [SHIFT] + [W|A|S|D] boosted burn",
     imageLabel: "Burn Forecast",
+    viewId: "burn-forecast",
   },
   {
     title: "Climb and Dive",
     body:
       "Use climb to create space and reset geometry.\nUse dive to recover timing and speed.\n- [Space] Climb against gravity\n- [C] Dive into gravity\nThese maneuvers are core tools for transfer and combat positioning.",
     imageLabel: "Energy Maneuvers",
+    viewId: "energy-maneuvers",
   },
 ];
 

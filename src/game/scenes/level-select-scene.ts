@@ -1,12 +1,10 @@
 import { resetGameMenuState, setGameMenuState } from "../../ui/game-menu-store";
 import { SHARED_MAP_LAYOUTS } from "../maps/shared-map-layouts";
 import {
-  buildMissionSceneId,
   buildSharedMapSceneId,
   type SceneContext,
   type SceneHandle,
 } from "./scene-manager";
-import { SCENARIO_DEFINITIONS } from "../scenarios/scenario-definitions";
 
 const SHARED_TEST_MISSION_ACCENTS = [
   "#7fe7d0",
@@ -16,36 +14,6 @@ const SHARED_TEST_MISSION_ACCENTS = [
 ];
 
 export function mountLevelSelectScene(context: SceneContext): SceneHandle {
-  const scenarioCards = Object.values(SCENARIO_DEFINITIONS)
-    .sort((left, right) => {
-      const orderDelta =
-        (left.presentation.sortOrder ?? Number.MAX_SAFE_INTEGER)
-        - (right.presentation.sortOrder ?? Number.MAX_SAFE_INTEGER);
-      if (orderDelta !== 0) {
-        return orderDelta;
-      }
-      return left.presentation.name.localeCompare(right.presentation.name);
-    })
-    .map((scenario) => {
-      const accentColor = scenario.presentation.accentColor ?? "#8ee8ff";
-      const eyebrow = scenario.presentation.eyebrow ?? "SCENARIO";
-      return {
-        key: `scenario-${scenario.id}`,
-        eyebrow,
-        title: scenario.presentation.name,
-        description:
-          scenario.presentation.description
-          ?? scenario.map.mapDescription
-          ?? "Authored scenario mission.",
-        accentColor,
-        action: {
-          label: "Launch Scenario",
-          accentColor,
-          onSelect: () => context.load(buildMissionSceneId(scenario.id)),
-        },
-      };
-    });
-
   const sharedMissionCards = Object.values(SHARED_MAP_LAYOUTS)
     .sort((left, right) => left.name.localeCompare(right.name))
     .map((layout, index) => {
@@ -71,13 +39,13 @@ export function mountLevelSelectScene(context: SceneContext): SceneHandle {
   setGameMenuState({
     visible: true,
     title: "Level Select",
-    subtitle: "Choose a route: authored scenarios, guided orbital drills, combat sandboxes, giant-system tests, or any shared Map Lab layout saved into the registry.",
-    description: "",
+    subtitle:
+      "Campaign missions are temporarily offline while we rework them. Use these sandbox and test routes in the meantime.",
+    description: "Campaign mission drafts removed for this playtest cycle.",
     accentColor: "#8b9bff",
     layout: "cards",
     actions: [],
     cards: [
-      ...scenarioCards,
       {
         key: "outer-battery",
         eyebrow: "SANDBOX",

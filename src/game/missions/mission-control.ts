@@ -2,10 +2,16 @@ import type { SceneCameraOverride } from "../scenes/scene-camera";
 
 export type MissionCameraOverride = SceneCameraOverride;
 
+export type MissionBriefingViewId =
+  | "trajectory-view"
+  | "burn-forecast"
+  | "energy-maneuvers";
+
 export interface MissionBriefingPage {
   title: string;
   body: string;
   imageLabel?: string;
+  viewId?: MissionBriefingViewId;
 }
 
 export interface MissionBriefingState {

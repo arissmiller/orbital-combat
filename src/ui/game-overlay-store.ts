@@ -36,6 +36,7 @@ export interface OverlayBriefingPageState {
   title: string;
   body: string;
   imageLabel?: string;
+  viewId?: string;
 }
 
 export interface OverlayBriefingState {

@@ -355,6 +355,12 @@
   letter-spacing: 0.08em;
 }
 
+.game-briefing__visual-svg {
+  width: min(100%, 340px);
+  height: auto;
+  display: block;
+}
+
 .game-briefing__copy {
   display: flex;
   flex-direction: column;

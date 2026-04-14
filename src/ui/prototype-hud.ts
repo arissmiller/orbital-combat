@@ -79,6 +79,7 @@ export function buildPrototypeHudState(
             title: page.title,
             body: page.body,
             imageLabel: page.imageLabel,
+            viewId: page.viewId,
           })),
           pageIndex: options.mission.control.briefing.pageIndex,
         }

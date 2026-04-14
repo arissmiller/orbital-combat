@@ -113,9 +113,7 @@ function BriefingPanel(props: {
       ) : null}
       <div className="game-briefing__content">
         <div className="game-briefing__image">
-          <div className="game-briefing__image-label">
-            {page.imageLabel ?? "Screenshot Placeholder"}
-          </div>
+          <BriefingVisual page={page} />
         </div>
         <div className="game-briefing__copy">
           <div className="game-briefing__page-title">{page.title}</div>
@@ -134,6 +132,139 @@ function BriefingPanel(props: {
       </div>
     </section>
   );
+}
+
+function BriefingVisual(props: {
+  page: OverlayBriefingState["pages"][number];
+}): ReactElement {
+  const { page } = props;
+  switch (page.viewId) {
+    case "trajectory-view":
+      return (
+        <svg
+          className="game-briefing__visual-svg"
+          viewBox="0 0 320 220"
+          role="img"
+          aria-label={page.imageLabel ?? "Trajectory View"}
+        >
+          <defs>
+            <radialGradient id="trajectoryGlow" cx="50%" cy="45%" r="62%">
+              <stop offset="0%" stopColor="#12304a" />
+              <stop offset="100%" stopColor="#08131d" />
+            </radialGradient>
+          </defs>
+          <rect width="320" height="220" rx="12" fill="url(#trajectoryGlow)" />
+          <circle cx="110" cy="110" r="22" fill="#264f70" stroke="#9fdcff" strokeWidth="2" />
+          <circle
+            cx="110"
+            cy="110"
+            r="72"
+            fill="none"
+            stroke="#5aa8d8"
+            strokeOpacity="0.42"
+            strokeWidth="1.5"
+          />
+          <path
+            d="M 196 62 C 242 84, 252 122, 228 151 C 206 178, 162 183, 128 160"
+            fill="none"
+            stroke="#8ee8ff"
+            strokeWidth="3"
+            strokeLinecap="round"
+          />
+          <circle cx="196" cy="62" r="4.2" fill="#d8f7ff" />
+          <circle cx="128" cy="160" r="4.2" fill="#d8f7ff" />
+          <text x="18" y="202" fill="#9ec5db" fontSize="12" fontFamily="Menlo, Monaco, monospace">
+            Coast path projection
+          </text>
+        </svg>
+      );
+    case "burn-forecast":
+      return (
+        <svg
+          className="game-briefing__visual-svg"
+          viewBox="0 0 320 220"
+          role="img"
+          aria-label={page.imageLabel ?? "Burn Forecast"}
+        >
+          <rect width="320" height="220" rx="12" fill="#08131d" />
+          <circle cx="88" cy="112" r="26" fill="#214765" stroke="#8ecbf1" strokeWidth="2" />
+          <path
+            d="M 126 102 C 172 90, 220 108, 258 148"
+            fill="none"
+            stroke="#79dfff"
+            strokeWidth="2.8"
+            strokeLinecap="round"
+          />
+          <path
+            d="M 126 102 C 176 75, 231 87, 277 125"
+            fill="none"
+            stroke="#ffd170"
+            strokeWidth="3"
+            strokeLinecap="round"
+          />
+          <path
+            d="M 126 102 C 180 56, 248 56, 299 95"
+            fill="none"
+            stroke="#ffc053"
+            strokeWidth="2.5"
+            strokeDasharray="6 6"
+            strokeLinecap="round"
+          />
+          <text x="168" y="165" fill="#9ec5db" fontSize="11.5" fontFamily="Menlo, Monaco, monospace">
+            cyan coast / yellow burn / dashed boost
+          </text>
+        </svg>
+      );
+    case "energy-maneuvers":
+      return (
+        <svg
+          className="game-briefing__visual-svg"
+          viewBox="0 0 320 220"
+          role="img"
+          aria-label={page.imageLabel ?? "Energy Maneuvers"}
+        >
+          <rect width="320" height="220" rx="12" fill="#08131d" />
+          <circle cx="160" cy="112" r="34" fill="#233f5a" stroke="#9fdcff" strokeWidth="2" />
+          <circle
+            cx="160"
+            cy="112"
+            r="82"
+            fill="none"
+            stroke="#6da6ce"
+            strokeOpacity="0.4"
+            strokeWidth="1.6"
+          />
+          <path
+            d="M 116 148 C 98 168, 88 188, 86 202"
+            fill="none"
+            stroke="#89ffd0"
+            strokeWidth="3"
+            strokeLinecap="round"
+          />
+          <path
+            d="M 204 76 C 228 56, 242 38, 246 20"
+            fill="none"
+            stroke="#ffcc72"
+            strokeWidth="3"
+            strokeLinecap="round"
+          />
+          <polygon points="81,199 95,200 88,210" fill="#89ffd0" />
+          <polygon points="250,18 241,30 255,30" fill="#ffcc72" />
+          <text x="20" y="34" fill="#ffcc72" fontSize="12" fontFamily="Menlo, Monaco, monospace">
+            Climb
+          </text>
+          <text x="20" y="204" fill="#89ffd0" fontSize="12" fontFamily="Menlo, Monaco, monospace">
+            Dive
+          </text>
+        </svg>
+      );
+    default:
+      return (
+        <div className="game-briefing__image-label">
+          {page.imageLabel ?? "Screenshot Placeholder"}
+        </div>
+      );
+  }
 }
 
 function SystemPanel(props: {
