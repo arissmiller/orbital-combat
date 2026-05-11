@@ -1,29 +1,324 @@
-import { resetGameMenuState, setGameMenuState } from "../../ui/game-menu-store";
+import {
+  resetGameMenuState,
+  setGameMenuState,
+  type MenuActionState,
+} from "../../ui/game-menu-store";
+import {
+  BrowserMultiplayerClient,
+  createDefaultMultiplayerServerUrl,
+  type MultiplayerClientState,
+} from "../network/browser-multiplayer-client";
 import type { SceneContext, SceneHandle } from "./scene-manager";
 
+const MULTIPLAYER_NAME_KEY = "orbital-combat.multiplayer.display-name";
+const MULTIPLAYER_SERVER_URL_KEY = "orbital-combat.multiplayer.server-url";
+
 export function mountMultiplayerMenuScene(context: SceneContext): SceneHandle {
-  setGameMenuState({
-    visible: true,
-    title: "Multiplayer",
-    subtitle: "Command network synchronization is in active development.",
-    description:
-      "For this playtest build, use Tutorial and Campaign while we finish online matchmaking and session flow.",
-    accentColor: "#ffb07f",
-    layout: "stack",
-    actions: [],
-    cards: [],
-    footerActions: [
-      {
-        label: "Back",
-        accentColor: "#8ee8ff",
-        onSelect: () => context.load("main-menu"),
-      },
-    ],
+  const client = new BrowserMultiplayerClient({
+    serverUrl:
+      readStoredValue(MULTIPLAYER_SERVER_URL_KEY)
+      ?? createDefaultMultiplayerServerUrl(),
+    displayName: readStoredValue(MULTIPLAYER_NAME_KEY) ?? "Pilot",
   });
+
+  const promptDisplayName = (): void => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const currentName = client.getState().displayName;
+    const nextName = window.prompt("Display name", currentName);
+    if (nextName === null) {
+      return;
+    }
+    const sanitized = nextName.trim();
+    if (sanitized.length === 0) {
+      return;
+    }
+    client.setDisplayName(sanitized);
+    writeStoredValue(MULTIPLAYER_NAME_KEY, sanitized);
+  };
+
+  const promptServerUrl = (): void => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const currentUrl = client.getState().serverUrl;
+    const nextUrl = window.prompt("WebSocket server URL", currentUrl);
+    if (nextUrl === null) {
+      return;
+    }
+    const sanitized = nextUrl.trim();
+    if (sanitized.length === 0) {
+      return;
+    }
+    client.setServerUrl(sanitized);
+    writeStoredValue(MULTIPLAYER_SERVER_URL_KEY, sanitized);
+  };
+
+  const promptJoinRoom = (): void => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const roomCode = window.prompt("Room code (6 characters)", "");
+    if (roomCode === null) {
+      return;
+    }
+    const normalized = roomCode.trim().toUpperCase();
+    if (normalized.length !== 6) {
+      return;
+    }
+    client.joinRoom(normalized);
+  };
+
+  const promptCreateRoom = (): void => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const raw = window.prompt("Max players (2-8). Leave blank for 4.", "4");
+    if (raw === null) {
+      return;
+    }
+    const trimmed = raw.trim();
+    if (trimmed.length === 0) {
+      client.createRoom();
+      return;
+    }
+
+    const parsed = Number.parseInt(trimmed, 10);
+    if (!Number.isFinite(parsed)) {
+      return;
+    }
+    const clamped = Math.max(2, Math.min(8, parsed));
+    client.createRoom(clamped);
+  };
+
+  const syncMenu = (): void => {
+    const state = client.getState();
+    setGameMenuState({
+      visible: true,
+      title: "Multiplayer",
+      subtitle: buildSubtitle(state),
+      description: buildDescription(state),
+      accentColor: "#ffb07f",
+      layout: "stack",
+      actions: buildActions(
+        state,
+        client,
+        promptDisplayName,
+        promptServerUrl,
+        promptCreateRoom,
+        promptJoinRoom,
+      ),
+      cards: [],
+      footerActions: [
+        {
+          label: "Back",
+          accentColor: "#8ee8ff",
+          onSelect: () => context.load("main-menu"),
+        },
+      ],
+    });
+  };
+
+  const unsubscribe = client.subscribe(syncMenu);
+  syncMenu();
 
   return {
     dispose() {
+      unsubscribe();
+      client.disconnect("Left multiplayer menu.");
       resetGameMenuState();
     },
   };
+}
+
+function buildActions(
+  state: MultiplayerClientState,
+  client: BrowserMultiplayerClient,
+  promptDisplayName: () => void,
+  promptServerUrl: () => void,
+  promptCreateRoom: () => void,
+  promptJoinRoom: () => void,
+): MenuActionState[] {
+  const room = state.room;
+  const self = room?.players.find((player) => player.id === state.playerId) ?? null;
+  const selfIsHost = Boolean(self?.isHost);
+
+  if (state.connectionStatus === "disconnected") {
+    return [
+      {
+        label: "Connect",
+        accentColor: "#ffb07f",
+        onSelect: () => client.connect(),
+      },
+      {
+        label: "Set Display Name",
+        accentColor: "#8ee8ff",
+        onSelect: promptDisplayName,
+      },
+      {
+        label: "Set Server URL",
+        accentColor: "#ffd173",
+        onSelect: promptServerUrl,
+      },
+    ];
+  }
+
+  if (state.connectionStatus === "connecting") {
+    return [
+      {
+        label: "Cancel",
+        accentColor: "#ff9f7f",
+        onSelect: () => client.disconnect("Canceled connection attempt."),
+      },
+      {
+        label: "Set Display Name",
+        accentColor: "#8ee8ff",
+        onSelect: promptDisplayName,
+      },
+      {
+        label: "Set Server URL",
+        accentColor: "#ffd173",
+        onSelect: promptServerUrl,
+      },
+    ];
+  }
+
+  if (!room) {
+    return [
+      {
+        label: "Create Room",
+        accentColor: "#ffb07f",
+        onSelect: promptCreateRoom,
+      },
+      {
+        label: "Join Room",
+        accentColor: "#8ee8ff",
+        onSelect: promptJoinRoom,
+      },
+      {
+        label: "Set Display Name",
+        accentColor: "#ffd173",
+        onSelect: promptDisplayName,
+      },
+      {
+        label: "Disconnect",
+        accentColor: "#ff9f7f",
+        onSelect: () => client.disconnect(),
+      },
+    ];
+  }
+
+  const actions: MenuActionState[] = [];
+  if (room.status === "lobby" && self) {
+    actions.push({
+      label: self.ready ? "Set Unready" : "Set Ready",
+      accentColor: self.ready ? "#7fe7d0" : "#ffd173",
+      onSelect: () => client.setReady(!self.ready),
+    });
+  }
+
+  if (room.status === "lobby" && selfIsHost) {
+    actions.push({
+      label: "Start Match",
+      accentColor: "#ffb07f",
+      onSelect: () => client.startMatch(),
+    });
+  }
+
+  actions.push(
+    {
+      label: "Ping",
+      accentColor: "#8ee8ff",
+      onSelect: () => client.ping(),
+    },
+    {
+      label: "Leave Room",
+      accentColor: "#ffd173",
+      onSelect: () => client.leaveRoom(),
+    },
+    {
+      label: "Disconnect",
+      accentColor: "#ff9f7f",
+      onSelect: () => client.disconnect(),
+    },
+  );
+
+  return actions;
+}
+
+function buildSubtitle(state: MultiplayerClientState): string {
+  if (state.connectionStatus === "disconnected") {
+    return "Disconnected. Connect to your server to host or join a room.";
+  }
+  if (state.connectionStatus === "connecting") {
+    return "Connecting to multiplayer server...";
+  }
+  if (!state.room) {
+    return "Connected. Create a room or join an existing room code.";
+  }
+
+  const readyCount = state.room.players.filter((player) => player.ready).length;
+  return `Room ${state.room.code} | ${state.room.status.toUpperCase()} | Players ${state.room.players.length}/${state.room.maxPlayers} | Ready ${readyCount}/${state.room.players.length}`;
+}
+
+function buildDescription(state: MultiplayerClientState): string {
+  const parts = [
+    `Server ${state.serverUrl}`,
+    `Name ${state.displayName}`,
+    state.playerId ? `Player ${state.playerId}` : "Player pending",
+  ];
+
+  if (state.room) {
+    const roster = state.room.players
+      .map((player) => {
+        const selfSuffix = player.id === state.playerId ? " (you)" : "";
+        const hostSuffix = player.isHost ? " [host]" : "";
+        const readySuffix = player.ready ? " [ready]" : "";
+        const connectionSuffix = player.connected ? "" : " [offline]";
+        return `${player.displayName}${selfSuffix}${hostSuffix}${readySuffix}${connectionSuffix}`;
+      })
+      .join(", ");
+    parts.push(`Roster ${roster}`);
+  }
+
+  if (state.latestSnapshot) {
+    parts.push(
+      `Snapshot tick ${state.latestSnapshot.tick} (${state.latestSnapshot.players.length} entities)`,
+    );
+  }
+
+  if (state.estimatedLatencyMs !== null) {
+    parts.push(`Latency ~${state.estimatedLatencyMs}ms`);
+  }
+  if (state.latestInfoMessage) {
+    parts.push(`Info ${state.latestInfoMessage}`);
+  }
+  if (state.latestErrorMessage) {
+    parts.push(`Error ${state.latestErrorMessage}`);
+  }
+
+  return parts.join(" | ");
+}
+
+function readStoredValue(key: string): string | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  try {
+    return window.localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function writeStoredValue(key: string, value: string): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+  try {
+    window.localStorage.setItem(key, value);
+  } catch {
+    // Ignore storage failures in private browsing or restrictive environments.
+  }
 }

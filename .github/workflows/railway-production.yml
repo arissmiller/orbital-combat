@@ -1,0 +1,45 @@
+name: Deploy to Railway Production
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: railway-production
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install Railway CLI
+        run: npm install -g @railway/cli
+
+      - name: Validate token
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        run: |
+          if [ -z "$RAILWAY_TOKEN" ]; then
+            echo "Missing required GitHub secret: RAILWAY_TOKEN"
+            exit 1
+          fi
+
+      - name: Deploy to Railway
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_PROJECT_ID: f2871c98-bb92-4c08-937e-5bd516709cdb
+          RAILWAY_ENVIRONMENT: production
+          RAILWAY_SERVICE: orbital-combat-web
+        run: railway up --ci --service "$RAILWAY_SERVICE" --environment "$RAILWAY_ENVIRONMENT" --project "$RAILWAY_PROJECT_ID"

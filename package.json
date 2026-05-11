@@ -7,19 +7,26 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "server:dev": "tsx watch server/main.ts",
+    "server:build": "tsc -p tsconfig.server.json",
+    "server:start": "node dist-server/main.js",
+    "deploy:dev": "railway up --ci --environment dev"
   },
   "license": "MIT",
   "dependencies": {
     "pixi.js": "^8.17.1",
     "react": "^19.2.4",
-    "react-dom": "^19.2.4"
+    "react-dom": "^19.2.4",
+    "ws": "^8.20.0"
   },
   "devDependencies": {
     "@types/node": "^25.5.0",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
+    "@types/ws": "^8.18.1",
     "@vitejs/plugin-react": "^4.7.0",
+    "tsx": "^4.21.0",
     "typescript": "^6.0.2",
     "vite": "^6.4.1"
   }

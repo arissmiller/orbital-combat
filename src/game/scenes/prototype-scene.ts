@@ -393,6 +393,7 @@ interface PrototypeSceneOptions {
   randomTargetPractice?: boolean;
   rangeVariant?: "classic" | "outer-orbit-launcher";
   spawnSystemId?: string;
+  spawnAnchorBodyId?: string;
   spawnOrbitRadius?: number;
   spawnOrbitDirection?: "cw" | "ccw";
   sharedMapLayout?: SharedMapLayout;
@@ -413,6 +414,7 @@ export function mountPrototypeScene(
     randomTargetPractice: false,
     rangeVariant: "classic" as const,
     spawnSystemId: null as string | null,
+    spawnAnchorBodyId: null as string | null,
     spawnOrbitRadius: null as number | null,
     spawnOrbitDirection: null as "cw" | "ccw" | null,
     sharedMapLayout: null as SharedMapLayout | null,
@@ -968,9 +970,19 @@ export function mountPrototypeScene(
         ? ringGiantSystem.systemId
         : startingSystem.systemId);
   const spawnRootConfig = getSystemSpawnRootConfig(celestialConfigs, spawnSystemId);
-  const spawnRootState = initialCelestialState.get(spawnRootConfig.id);
-  if (!spawnRootState) {
-    throw new Error(`Missing spawn root state for ${spawnRootConfig.id}`);
+  const spawnAnchorBodyId = sceneOptions.spawnAnchorBodyId
+    ?? missionSpawnOverride?.anchorBodyId
+    ?? sharedSpawn?.anchorBodyId
+    ?? null;
+  const spawnAnchorConfig = resolveSpawnAnchorConfig({
+    celestialConfigs,
+    systemId: spawnSystemId,
+    fallbackRootConfig: spawnRootConfig,
+    anchorBodyId: spawnAnchorBodyId,
+  });
+  const spawnAnchorState = initialCelestialState.get(spawnAnchorConfig.id);
+  if (!spawnAnchorState) {
+    throw new Error(`Missing spawn anchor state for ${spawnAnchorConfig.id}`);
   }
   const spawnOrbitRadius = sceneOptions.spawnOrbitRadius
     ?? missionSpawnOverride?.orbitRadius
@@ -980,12 +992,18 @@ export function mountPrototypeScene(
       : sceneOptions.sceneLayout === "ring-giant"
         ? 1860
         : 980);
+  const spawnAnchorCollisionRadius =
+    spawnAnchorConfig.collisionRadius ?? spawnAnchorConfig.radius;
+  const safeSpawnOrbitRadius = Math.max(
+    spawnOrbitRadius,
+    spawnAnchorCollisionRadius + 260,
+  );
   const spawnOrbitDirection = sceneOptions.spawnOrbitDirection
     ?? missionSpawnOverride?.orbitDirection
     ?? sharedSpawn?.orbitDirection
     ?? "cw";
   const spawnOrbitalSpeed = Math.sqrt(
-    (gravitationalConstant * spawnRootConfig.mass) / spawnOrbitRadius,
+    (gravitationalConstant * spawnAnchorConfig.mass) / safeSpawnOrbitRadius,
   );
   const spawnVelocityDirection = spawnOrbitDirection === "cw" ? 1 : -1;
   const spawnHeading = spawnOrbitDirection === "cw"
@@ -997,15 +1015,15 @@ export function mountPrototypeScene(
     mass: 12,
     radius: 16,
     collisionRadius: 26,
-    systemId: spawnSystemId,
+    systemId: spawnAnchorConfig.systemId,
     affectsGravity: false,
     position: {
-      x: spawnRootState.position.x,
-      y: spawnRootState.position.y - spawnOrbitRadius,
+      x: spawnAnchorState.position.x,
+      y: spawnAnchorState.position.y - safeSpawnOrbitRadius,
     },
     velocity: {
-      x: spawnRootState.velocity.x + spawnOrbitalSpeed * spawnVelocityDirection,
-      y: spawnRootState.velocity.y,
+      x: spawnAnchorState.velocity.x + spawnOrbitalSpeed * spawnVelocityDirection,
+      y: spawnAnchorState.velocity.y,
     },
     propulsion: {
       heading: spawnHeading,
@@ -1014,7 +1032,7 @@ export function mountPrototypeScene(
     },
   });
   const shipSpawnState = {
-    systemId: spawnSystemId,
+    systemId: spawnAnchorConfig.systemId,
     position: { x: interceptorBody.position.x, y: interceptorBody.position.y },
     velocity: { x: interceptorBody.velocity.x, y: interceptorBody.velocity.y },
     heading: interceptorBody.propulsion?.heading ?? spawnHeading,
@@ -2100,6 +2118,7 @@ export function mountPrototypeScene(
             celestialConfigs,
             celestialVisuals,
             gravitationalConstant,
+            anchorBodyId: spawnAnchorBodyId,
             defaultOrbitRadius: spawnOrbitRadius,
             orbitDirection: spawnOrbitDirection,
           });
@@ -3863,6 +3882,7 @@ function createSystemRespawnState(options: {
   celestialConfigs: readonly CelestialConfig[];
   celestialVisuals: readonly CelestialVisual[];
   gravitationalConstant: number;
+  anchorBodyId?: string | null;
   defaultOrbitRadius: number;
   orbitDirection: MapSpawnOrbitDirection;
 }): ShipSpawnState {
@@ -3870,24 +3890,40 @@ function createSystemRespawnState(options: {
     options.celestialConfigs,
     options.systemId,
   );
-  const rootVisual = getSystemRoot(options.celestialVisuals, options.systemId);
-  const orbitRadius = Math.max(options.defaultOrbitRadius, rootConfig.radius + 260);
+  const spawnAnchorConfig = resolveSpawnAnchorConfig({
+    celestialConfigs: options.celestialConfigs,
+    systemId: options.systemId,
+    fallbackRootConfig: rootConfig,
+    anchorBodyId: options.anchorBodyId,
+  });
+  const spawnAnchorVisual = options.celestialVisuals.find(
+    (visual) => visual.config.id === spawnAnchorConfig.id,
+  );
+  if (!spawnAnchorVisual) {
+    throw new Error(`Missing spawn anchor visual for ${spawnAnchorConfig.id}`);
+  }
+  const spawnAnchorCollisionRadius =
+    spawnAnchorConfig.collisionRadius ?? spawnAnchorConfig.radius;
+  const orbitRadius = Math.max(
+    options.defaultOrbitRadius,
+    spawnAnchorCollisionRadius + 260,
+  );
   const orbitalSpeed = Math.sqrt(
-    (options.gravitationalConstant * rootConfig.mass) / orbitRadius,
+    (options.gravitationalConstant * spawnAnchorConfig.mass) / orbitRadius,
   );
   const velocityDirection = options.orbitDirection === "cw" ? 1 : -1;
   const heading =
     options.orbitDirection === "cw" ? Math.PI / 2 : Math.PI * 1.5;
 
   return {
-    systemId: options.systemId,
+    systemId: spawnAnchorConfig.systemId,
     position: {
-      x: rootVisual.body.position.x,
-      y: rootVisual.body.position.y - orbitRadius,
+      x: spawnAnchorVisual.body.position.x,
+      y: spawnAnchorVisual.body.position.y - orbitRadius,
     },
     velocity: {
-      x: rootVisual.body.velocity.x + orbitalSpeed * velocityDirection,
-      y: rootVisual.body.velocity.y,
+      x: spawnAnchorVisual.body.velocity.x + orbitalSpeed * velocityDirection,
+      y: spawnAnchorVisual.body.velocity.y,
     },
     heading,
   };
@@ -7202,6 +7238,26 @@ function getSystemRoot(
   }
 
   return root;
+}
+
+function resolveSpawnAnchorConfig(options: {
+  celestialConfigs: readonly CelestialConfig[];
+  systemId: string;
+  fallbackRootConfig: CelestialConfig;
+  anchorBodyId?: string | null;
+}): CelestialConfig {
+  const normalizedAnchorBodyId = options.anchorBodyId?.trim();
+  if (!normalizedAnchorBodyId) {
+    return options.fallbackRootConfig;
+  }
+
+  const anchorConfig = options.celestialConfigs.find(
+    (config) =>
+      config.id === normalizedAnchorBodyId
+      && config.systemId === options.systemId,
+  );
+
+  return anchorConfig ?? options.fallbackRootConfig;
 }
 
 function buildSystemRootPositionMap(

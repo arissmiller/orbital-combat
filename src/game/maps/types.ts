@@ -115,6 +115,7 @@ export type MapSpawnOrbitDirection = OrbitDirection;
 
 export interface MapSpawnConfig {
   systemId: string;
+  anchorBodyId?: string;
   orbitRadius: number;
   orbitDirection: MapSpawnOrbitDirection;
 }
