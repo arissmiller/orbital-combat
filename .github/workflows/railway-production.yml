@@ -42,4 +42,25 @@ jobs:
           RAILWAY_PROJECT_ID: f2871c98-bb92-4c08-937e-5bd516709cdb
           RAILWAY_ENVIRONMENT: production
           RAILWAY_SERVICE: orbital-combat-web
-        run: railway up --ci --service "$RAILWAY_SERVICE" --environment "$RAILWAY_ENVIRONMENT" --project "$RAILWAY_PROJECT_ID"
+        run: |
+          max_attempts=5
+          attempt=1
+
+          while [ "$attempt" -le "$max_attempts" ]; do
+            echo "Deploy attempt ${attempt}/${max_attempts}"
+            if railway up --ci --verbose --service "$RAILWAY_SERVICE" --environment "$RAILWAY_ENVIRONMENT" --project "$RAILWAY_PROJECT_ID"; then
+              echo "Deployment succeeded."
+              exit 0
+            fi
+
+            if [ "$attempt" -lt "$max_attempts" ]; then
+              sleep_seconds=$((attempt * 15))
+              echo "Deployment failed. Retrying in ${sleep_seconds}s..."
+              sleep "$sleep_seconds"
+            fi
+
+            attempt=$((attempt + 1))
+          done
+
+          echo "Deployment failed after ${max_attempts} attempts."
+          exit 1
