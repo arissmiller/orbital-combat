@@ -43,6 +43,16 @@ jobs:
           RAILWAY_ENVIRONMENT: production
           RAILWAY_SERVICE: orbital-combat-web
         run: |
+          if ! railway service status --service "$RAILWAY_SERVICE" --environment "$RAILWAY_ENVIRONMENT" --project "$RAILWAY_PROJECT_ID" >/tmp/railway-target-check.log 2>&1; then
+            echo "Railway deploy target is invalid for this environment."
+            echo "Service: $RAILWAY_SERVICE"
+            echo "Environment: $RAILWAY_ENVIRONMENT"
+            echo "Project: $RAILWAY_PROJECT_ID"
+            echo "Tip: In Railway dashboard, open the target environment and use Sync to import this service."
+            cat /tmp/railway-target-check.log
+            exit 1
+          fi
+
           max_attempts=5
           attempt=1
 
