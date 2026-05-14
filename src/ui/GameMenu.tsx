@@ -4,7 +4,7 @@ import { useGameMenuState } from "./game-menu-store";
 export function GameMenu(): ReactElement | null {
   const menuState = useGameMenuState();
   const leftColumnLayout = menuState.layout === "left-column";
-  const showGithubLink = leftColumnLayout;
+  const showExternalLinks = leftColumnLayout;
 
   if (!menuState.visible) {
     return null;
@@ -84,15 +84,23 @@ export function GameMenu(): ReactElement | null {
           </>
         )}
       </main>
-      {showGithubLink ? (
-        <a
-          className="game-menu__github-link"
-          href="https://github.com/arissmiller/orbital-combat"
-          target="_blank"
-          rel="noreferrer"
-        >
-          GitHub
-        </a>
+      {showExternalLinks ? (
+        <div className="game-menu__external-links">
+          <a
+            className="game-menu__button game-menu__button--compact game-menu__button--link"
+            href="https://arissmiller.net"
+          >
+            Back to Projects
+          </a>
+          <a
+            className="game-menu__button game-menu__button--compact game-menu__button--link"
+            href="https://github.com/arissmiller/orbital-combat"
+            target="_blank"
+            rel="noreferrer"
+          >
+            GitHub
+          </a>
+        </div>
       ) : null}
     </div>
   );

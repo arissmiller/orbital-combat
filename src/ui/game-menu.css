@@ -255,13 +255,22 @@
   letter-spacing: 0.01em;
 }
 
-.game-menu__github-link {
+.game-menu__external-links {
   position: absolute;
   left: 50%;
   bottom: max(16px, env(safe-area-inset-bottom));
   transform: translateX(-50%);
+  display: flex;
+  gap: 10px;
   pointer-events: auto;
   z-index: 1;
+}
+
+.game-menu__button--link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
 }
 
 @media (max-width: 920px) {
