@@ -48,7 +48,7 @@ Workflow target details:
 
 - Project ID: `f2871c98-bb92-4c08-937e-5bd516709cdb`
 - Environment: `production`
-- Service: `orbital-combat-web`
+- Service: `orbital-combat-web-prod`
 
 ### Optional env vars
 
