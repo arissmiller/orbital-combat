@@ -261,7 +261,10 @@
   bottom: max(16px, env(safe-area-inset-bottom));
   transform: translateX(-50%);
   display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
   gap: 10px;
+  max-width: calc(100% - 24px);
   pointer-events: auto;
   z-index: 1;
 }
@@ -271,6 +274,54 @@
   align-items: center;
   justify-content: center;
   text-decoration: none;
+}
+
+.game-menu__button--soundtrack {
+  --menu-accent: #1ed760;
+  --menu-accent-soft: rgba(30, 215, 96, 0.3);
+  --menu-accent-faint: rgba(30, 215, 96, 0.18);
+  --menu-accent-line: rgba(30, 215, 96, 0.55);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding-inline: 18px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  background: linear-gradient(180deg, rgba(21, 70, 40, 0.95) 0%, rgba(13, 44, 26, 0.98) 100%);
+  box-shadow:
+    0 0 0 1px rgba(30, 215, 96, 0.26),
+    0 12px 28px rgba(0, 0, 0, 0.26);
+  animation: soundtrack-pulse 2200ms ease-in-out infinite;
+}
+
+.game-menu__button--soundtrack:hover,
+.game-menu__button--soundtrack:focus-visible {
+  background: linear-gradient(180deg, rgba(25, 84, 49, 1) 0%, rgba(16, 57, 33, 1) 100%);
+  box-shadow:
+    0 0 0 1px rgba(30, 215, 96, 0.42),
+    0 0 20px rgba(30, 215, 96, 0.25),
+    0 16px 30px rgba(0, 0, 0, 0.28);
+}
+
+@keyframes soundtrack-pulse {
+  0%,
+  100% {
+    box-shadow:
+      0 0 0 1px rgba(30, 215, 96, 0.26),
+      0 12px 28px rgba(0, 0, 0, 0.26);
+  }
+  50% {
+    box-shadow:
+      0 0 0 1px rgba(30, 215, 96, 0.42),
+      0 0 16px rgba(30, 215, 96, 0.2),
+      0 14px 28px rgba(0, 0, 0, 0.3);
+  }
+}
+
+.game-menu__spotify-logo {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
 }
 
 @media (max-width: 920px) {

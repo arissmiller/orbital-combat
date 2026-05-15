@@ -2,7 +2,6 @@ import { useEffect, useRef } from "react";
 import { bootstrapGame, type GameRuntime } from "../game/bootstrap";
 import { resetGameOverlayState } from "./game-overlay-store";
 import { AudioSandbox } from "./AudioSandbox";
-import { GameBackgroundAudio } from "./GameBackgroundAudio";
 import { GameEngineAudio } from "./GameEngineAudio";
 import { GameOverlay } from "./GameOverlay";
 import { GameMenu } from "./GameMenu";
@@ -52,7 +51,6 @@ export function GameApp() {
       <GameWarningAudio />
       <GameEngineAudio />
       <GameWeaponAudio />
-      <GameBackgroundAudio />
       {AUDIO_SANDBOX_ENABLED ? <AudioSandbox /> : null}
       <PauseLauncher />
       <MapSandbox />

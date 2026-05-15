@@ -1,6 +1,9 @@
 import type { ReactElement } from "react";
 import { useGameMenuState } from "./game-menu-store";
 
+const SOUNDTRACK_URL =
+  "https://open.spotify.com/playlist/63DWq99kJe2Vrh9m98lx3L?si=1163534a40ae431b";
+
 export function GameMenu(): ReactElement | null {
   const menuState = useGameMenuState();
   const leftColumnLayout = menuState.layout === "left-column";
@@ -86,6 +89,34 @@ export function GameMenu(): ReactElement | null {
       </main>
       {showExternalLinks ? (
         <div className="game-menu__external-links">
+          <a
+            className="game-menu__button game-menu__button--compact game-menu__button--link game-menu__button--soundtrack"
+            href={SOUNDTRACK_URL}
+            target="_blank"
+            rel="noreferrer"
+          >
+            <svg
+              className="game-menu__spotify-logo"
+              viewBox="0 0 24 24"
+              aria-hidden="true"
+              focusable="false"
+            >
+              <circle cx="12" cy="12" r="12" fill="#1ed760" />
+              <path
+                d="M17.8 9.4a.94.94 0 0 1-1.29.3 9.6 9.6 0 0 0-9.4-.9.94.94 0 1 1-.74-1.72 11.5 11.5 0 0 1 11.27 1.06.94.94 0 0 1 .16 1.26Z"
+                fill="#0b0f14"
+              />
+              <path
+                d="M16.8 12.2a.78.78 0 0 1-1.08.24 7.9 7.9 0 0 0-7.34-.7.78.78 0 1 1-.58-1.44 9.46 9.46 0 0 1 8.77.83.78.78 0 0 1 .23 1.07Z"
+                fill="#0b0f14"
+              />
+              <path
+                d="M15.9 14.8a.62.62 0 0 1-.86.2 6.3 6.3 0 0 0-5.38-.5.62.62 0 0 1-.42-1.17 7.53 7.53 0 0 1 6.43.6.62.62 0 0 1 .23.87Z"
+                fill="#0b0f14"
+              />
+            </svg>
+            <span>"Soundtrack" on Spotify</span>
+          </a>
           <a
             className="game-menu__button game-menu__button--compact game-menu__button--link"
             href="https://arissmiller.net"
