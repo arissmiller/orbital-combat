@@ -1,0 +1,100 @@
+name: Deploy to Railway Dev
+
+on:
+  push:
+    branches: [dev]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: railway-dev
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install Railway CLI
+        run: npm install -g @railway/cli
+
+      - name: Validate Railway config
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_PROJECT_ID: ${{ vars.RAILWAY_DEV_PROJECT_ID }}
+          RAILWAY_ENVIRONMENT: ${{ vars.RAILWAY_DEV_ENVIRONMENT }}
+          RAILWAY_SERVICE: ${{ vars.RAILWAY_DEV_SERVICE }}
+        run: |
+          missing=0
+
+          if [ -z "$RAILWAY_TOKEN" ]; then
+            echo "Missing required GitHub secret: RAILWAY_TOKEN"
+            missing=1
+          fi
+
+          if [ -z "$RAILWAY_PROJECT_ID" ]; then
+            echo "Missing required GitHub variable: RAILWAY_DEV_PROJECT_ID"
+            missing=1
+          fi
+
+          if [ -z "$RAILWAY_ENVIRONMENT" ]; then
+            echo "Missing required GitHub variable: RAILWAY_DEV_ENVIRONMENT"
+            missing=1
+          fi
+
+          if [ -z "$RAILWAY_SERVICE" ]; then
+            echo "Missing required GitHub variable: RAILWAY_DEV_SERVICE"
+            missing=1
+          fi
+
+          if [ "$missing" -eq 1 ]; then
+            exit 1
+          fi
+
+      - name: Deploy to Railway Dev
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_PROJECT_ID: ${{ vars.RAILWAY_DEV_PROJECT_ID }}
+          RAILWAY_ENVIRONMENT: ${{ vars.RAILWAY_DEV_ENVIRONMENT }}
+          RAILWAY_SERVICE: ${{ vars.RAILWAY_DEV_SERVICE }}
+        run: |
+          if ! railway service status --service "$RAILWAY_SERVICE" --environment "$RAILWAY_ENVIRONMENT" --project "$RAILWAY_PROJECT_ID" >/tmp/railway-target-check.log 2>&1; then
+            echo "Railway deploy target is invalid for this environment."
+            echo "Service: $RAILWAY_SERVICE"
+            echo "Environment: $RAILWAY_ENVIRONMENT"
+            echo "Project: $RAILWAY_PROJECT_ID"
+            echo "Tip: In Railway dashboard, open the target environment and use Sync to import this service."
+            cat /tmp/railway-target-check.log
+            exit 1
+          fi
+
+          max_attempts=5
+          attempt=1
+
+          while [ "$attempt" -le "$max_attempts" ]; do
+            echo "Deploy attempt ${attempt}/${max_attempts}"
+            if railway up --ci --verbose --service "$RAILWAY_SERVICE" --environment "$RAILWAY_ENVIRONMENT" --project "$RAILWAY_PROJECT_ID"; then
+              echo "Deployment succeeded."
+              exit 0
+            fi
+
+            if [ "$attempt" -lt "$max_attempts" ]; then
+              sleep_seconds=$((attempt * 15))
+              echo "Deployment failed. Retrying in ${sleep_seconds}s..."
+              sleep "$sleep_seconds"
+            fi
+
+            attempt=$((attempt + 1))
+          done
+
+          echo "Deployment failed after ${max_attempts} attempts."
+          exit 1
