@@ -46,12 +46,16 @@ It deploys on pushes to `main` (and can also be run manually from the Actions ta
 1. In GitHub, go to `Settings -> Secrets and variables -> Actions`.
 2. Add repository secret `RAILWAY_TOKEN`.
 3. Create that token in Railway as a **project token scoped to the `production` environment**.
+4. Add repository variables:
+   - `RAILWAY_PROD_PROJECT_ID`
+   - `RAILWAY_PROD_ENVIRONMENT` (usually `production`)
+   - `RAILWAY_PROD_SERVICE`
 
-Workflow target details:
+Production target details (values for the variables above):
 
 - Project ID: `f2871c98-bb92-4c08-937e-5bd516709cdb`
 - Environment: `production`
-- Service: `orbital-combat-web-prod`
+- Service ID: `982d2679-7a24-48db-b504-43f4e11ffe74` (`orbital-combat-web-prod`)
 
 ### Optional env vars
 

@@ -27,21 +27,45 @@ jobs:
       - name: Install Railway CLI
         run: npm install -g @railway/cli
 
-      - name: Validate token
+      - name: Validate Railway config
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_PROJECT_ID: ${{ vars.RAILWAY_PROD_PROJECT_ID }}
+          RAILWAY_ENVIRONMENT: ${{ vars.RAILWAY_PROD_ENVIRONMENT }}
+          RAILWAY_SERVICE: ${{ vars.RAILWAY_PROD_SERVICE }}
         run: |
+          missing=0
+
           if [ -z "$RAILWAY_TOKEN" ]; then
             echo "Missing required GitHub secret: RAILWAY_TOKEN"
+            missing=1
+          fi
+
+          if [ -z "$RAILWAY_PROJECT_ID" ]; then
+            echo "Missing required GitHub variable: RAILWAY_PROD_PROJECT_ID"
+            missing=1
+          fi
+
+          if [ -z "$RAILWAY_ENVIRONMENT" ]; then
+            echo "Missing required GitHub variable: RAILWAY_PROD_ENVIRONMENT"
+            missing=1
+          fi
+
+          if [ -z "$RAILWAY_SERVICE" ]; then
+            echo "Missing required GitHub variable: RAILWAY_PROD_SERVICE"
+            missing=1
+          fi
+
+          if [ "$missing" -eq 1 ]; then
             exit 1
           fi
 
-      - name: Deploy to Railway
+      - name: Deploy to Railway Production
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
-          RAILWAY_PROJECT_ID: f2871c98-bb92-4c08-937e-5bd516709cdb
-          RAILWAY_ENVIRONMENT: production
-          RAILWAY_SERVICE: 982d2679-7a24-48db-b504-43f4e11ffe74
+          RAILWAY_PROJECT_ID: ${{ vars.RAILWAY_PROD_PROJECT_ID }}
+          RAILWAY_ENVIRONMENT: ${{ vars.RAILWAY_PROD_ENVIRONMENT }}
+          RAILWAY_SERVICE: ${{ vars.RAILWAY_PROD_SERVICE }}
         run: |
           if ! railway service status --service "$RAILWAY_SERVICE" --environment "$RAILWAY_ENVIRONMENT" --project "$RAILWAY_PROJECT_ID" >/tmp/railway-target-check.log 2>&1; then
             echo "Railway deploy target is invalid for this environment."
