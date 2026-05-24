@@ -40,6 +40,9 @@ export type ClientMessage =
   | {
       type: "ping";
       clientTime: number;
+    }
+  | {
+      type: "list-rooms";
     };
 
 export interface RoomPlayerSnapshot {
@@ -50,12 +53,29 @@ export interface RoomPlayerSnapshot {
   connected: boolean;
 }
 
+export interface RoomMapSnapshot {
+  id: string;
+  name: string;
+  description: string;
+  celestialBodyCount: number;
+}
+
 export interface RoomSnapshot {
   code: string;
   status: "lobby" | "running";
   maxPlayers: number;
   hostPlayerId: string;
   players: RoomPlayerSnapshot[];
+  map?: RoomMapSnapshot;
+}
+
+export interface PublicRoomSnapshot {
+  code: string;
+  status: "lobby" | "running";
+  playerCount: number;
+  maxPlayers: number;
+  hostDisplayName: string;
+  map?: RoomMapSnapshot;
 }
 
 export interface SimPlayerSnapshot {
@@ -68,11 +88,26 @@ export interface SimPlayerSnapshot {
   lastProcessedInputSequence: number | null;
 }
 
+export interface SimCelestialBodySnapshot {
+  id: string;
+  name: string;
+  parentId: string | null;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  mass: number;
+  radius: number;
+  orbitEccentricity: number;
+}
+
 export interface SimulationSnapshot {
   roomCode: string;
   tick: number;
   sentAtMs: number;
   players: SimPlayerSnapshot[];
+  mapId?: string;
+  celestialBodies?: SimCelestialBodySnapshot[];
 }
 
 export type ServerMessage =
@@ -84,6 +119,10 @@ export type ServerMessage =
   | {
       type: "room-update";
       room: RoomSnapshot;
+    }
+  | {
+      type: "room-list";
+      rooms: PublicRoomSnapshot[];
     }
   | {
       type: "match-started";
@@ -203,6 +242,8 @@ export function parseClientMessage(raw: unknown): ClientMessage | null {
         clientTime,
       };
     }
+    case "list-rooms":
+      return { type: "list-rooms" };
     default:
       return null;
   }

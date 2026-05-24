@@ -1,11 +1,17 @@
 import { WebSocket } from "ws";
 import type { RawData } from "ws";
 import {
+  buildRoomMapSnapshot,
+  getDefaultMultiplayerMapDefinition,
+  type MultiplayerMapDefinition,
+} from "./map.js";
+import {
   DEFAULT_MAX_PLAYERS,
   ROOM_CODE_LENGTH,
   SERVER_TICK_RATE,
   type ClientMessage,
   type PlayerInputCommand,
+  type PublicRoomSnapshot,
   type RoomSnapshot,
   type ServerMessage,
   type RoomPlayerSnapshot,
@@ -19,6 +25,7 @@ import {
 } from "./simulation.js";
 
 const ROOM_CODE_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
+const MAX_ACTIVE_ROOMS = 4;
 
 interface ConnectedClient {
   id: string;
@@ -36,6 +43,7 @@ interface RoomState {
   maxPlayers: number;
   hostPlayerId: string;
   playerIds: string[];
+  mapDefinition: MultiplayerMapDefinition;
   simulation: RoomSimulationState | null;
 }
 
@@ -59,6 +67,7 @@ export class RoomManager {
     };
 
     this.clients.set(clientId, client);
+    this.broadcastRoomDirectory();
     return client;
   }
 
@@ -71,6 +80,7 @@ export class RoomManager {
     client.connected = false;
     this.leaveRoom(client, "Player disconnected.");
     this.clients.delete(clientId);
+    this.broadcastRoomDirectory();
   }
 
   public handleMessage(clientId: string, message: ClientMessage): void {
@@ -84,6 +94,7 @@ export class RoomManager {
         if (message.displayName) {
           client.displayName = message.displayName;
           this.broadcastRoomUpdate(client.roomCode);
+          this.broadcastRoomDirectory();
         }
         return;
       case "create-room":
@@ -114,6 +125,9 @@ export class RoomManager {
           clientTime: message.clientTime,
           serverTimeMs: Date.now(),
         });
+        return;
+      case "list-rooms":
+        this.sendRoomDirectory(client);
         return;
       default:
         return;
@@ -163,6 +177,17 @@ export class RoomManager {
   }
 
   private createRoomForClient(client: ConnectedClient, maxPlayers: number): void {
+    if (this.rooms.size >= MAX_ACTIVE_ROOMS) {
+      this.sendError(
+        client,
+        "room-limit-reached",
+        `Server room cap reached (${MAX_ACTIVE_ROOMS}). Try joining an existing room.`,
+      );
+      this.sendRoomDirectory(client);
+      return;
+    }
+
+    const mapDefinition = getDefaultMultiplayerMapDefinition();
     const roomCode = this.generateRoomCode();
     const clampedMaxPlayers = clampInteger(maxPlayers, 2, 8);
     const room: RoomState = {
@@ -171,6 +196,7 @@ export class RoomManager {
       maxPlayers: clampedMaxPlayers,
       hostPlayerId: client.id,
       playerIds: [client.id],
+      mapDefinition,
       simulation: null,
     };
 
@@ -181,9 +207,12 @@ export class RoomManager {
 
     this.send(client, {
       type: "info",
-      message: `Room ${roomCode} created.`,
+      message:
+        `Room ${roomCode} created on map ${mapDefinition.name}.`
+        + ` (${this.rooms.size}/${MAX_ACTIVE_ROOMS} active rooms)`,
     });
     this.broadcastRoomUpdate(roomCode);
+    this.broadcastRoomDirectory();
   }
 
   private joinRoom(client: ConnectedClient, roomCode: string): void {
@@ -212,6 +241,7 @@ export class RoomManager {
       message: `${client.displayName} joined room ${room.code}.`,
     });
     this.broadcastRoomUpdate(room.code);
+    this.broadcastRoomDirectory();
   }
 
   private leaveRoom(client: ConnectedClient, infoMessage?: string): void {
@@ -236,6 +266,7 @@ export class RoomManager {
 
     if (room.playerIds.length === 0) {
       this.rooms.delete(room.code);
+      this.broadcastRoomDirectory();
       return;
     }
 
@@ -266,6 +297,7 @@ export class RoomManager {
       message: `${client.displayName} left room ${room.code}.`,
     });
     this.broadcastRoomUpdate(room.code);
+    this.broadcastRoomDirectory();
   }
 
   private setReadyState(client: ConnectedClient, ready: boolean): void {
@@ -311,7 +343,11 @@ export class RoomManager {
     }
 
     room.status = "running";
-    room.simulation = createRoomSimulation(room.code, room.playerIds);
+    room.simulation = createRoomSimulation(
+      room.code,
+      room.playerIds,
+      room.mapDefinition,
+    );
     for (const playerId of room.playerIds) {
       const roomClient = this.clients.get(playerId);
       if (roomClient) {
@@ -326,6 +362,7 @@ export class RoomManager {
       serverTimeMs: Date.now(),
     });
     this.broadcastRoomUpdate(room.code);
+    this.broadcastRoomDirectory();
   }
 
   private recordPlayerInput(client: ConnectedClient, input: PlayerInputCommand): void {
@@ -378,6 +415,7 @@ export class RoomManager {
       maxPlayers: room.maxPlayers,
       hostPlayerId: room.hostPlayerId,
       players,
+      map: buildRoomMapSnapshot(room.mapDefinition),
     };
   }
 
@@ -404,6 +442,48 @@ export class RoomManager {
       code,
       message,
     });
+  }
+
+  private broadcastRoomDirectory(): void {
+    for (const client of this.clients.values()) {
+      this.sendRoomDirectory(client);
+    }
+  }
+
+  private sendRoomDirectory(client: ConnectedClient): void {
+    this.send(client, {
+      type: "room-list",
+      rooms: this.buildPublicRoomSnapshots(),
+    });
+  }
+
+  private buildPublicRoomSnapshots(): PublicRoomSnapshot[] {
+    const rooms: PublicRoomSnapshot[] = [];
+    for (const room of this.rooms.values()) {
+      if (room.status !== "lobby") {
+        continue;
+      }
+      if (room.playerIds.length >= room.maxPlayers) {
+        continue;
+      }
+      const host = this.clients.get(room.hostPlayerId);
+      rooms.push({
+        code: room.code,
+        status: room.status,
+        playerCount: room.playerIds.length,
+        maxPlayers: room.maxPlayers,
+        hostDisplayName: host?.displayName ?? "Host",
+        map: buildRoomMapSnapshot(room.mapDefinition),
+      });
+    }
+
+    rooms.sort((left, right) => {
+      if (left.playerCount !== right.playerCount) {
+        return right.playerCount - left.playerCount;
+      }
+      return left.code.localeCompare(right.code);
+    });
+    return rooms;
   }
 
   private generateRoomCode(): string {

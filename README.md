@@ -11,8 +11,9 @@ A lightweight authoritative multiplayer scaffold now lives in `server/`.
 
 - Transport: WebSockets (`ws`)
 - Runtime: Node.js
-- Rooms: in-memory only (no persistence yet)
+- Rooms: in-memory, on-demand, capped at 4 active rooms
 - Tick loop: fixed 20 Hz
+- Default map: `Caldera Twin-Moon Arena` (gas giant + 2 moons with distinct eccentric orbits)
 
 ### Run in development
 
@@ -30,9 +31,11 @@ Defaults:
 ### Build and run
 
 ```bash
-npm run server:build
+npm run build:server
 npm run server:start
 ```
+
+When `dist/index.html` exists (run `npm run build`), `npm run server:start` also serves the frontend from the same process on the same host/port as the WebSocket multiplayer server.
 
 ### Deploy to Railway production from GitHub
 
@@ -53,8 +56,20 @@ Workflow target details:
 ### Optional env vars
 
 - `MULTIPLAYER_HOST`
-- `MULTIPLAYER_PORT`
+- `MULTIPLAYER_PORT` (takes priority)
+- `PORT` (used automatically when `MULTIPLAYER_PORT` is unset, e.g. on Railway)
 - `MULTIPLAYER_WS_PATH`
+- `MULTIPLAYER_SERVE_FRONTEND` (`true`/`false`, default `true`)
+- `MULTIPLAYER_FRONTEND_DIST` (default `dist`)
+
+### Railway Deploy Commands
+
+If your Railway deployment is serving only static files, set explicit commands:
+
+- Build command: `npm run build:deploy`
+- Start command: `npm start`
+
+This ensures both `dist/` (frontend) and `dist-server/` (multiplayer server) are built, and the Node server starts in production.
 
 ## Browser Multiplayer Menu (Prototype)
 

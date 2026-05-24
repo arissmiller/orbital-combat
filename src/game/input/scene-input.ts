@@ -7,6 +7,8 @@ export interface SceneInputState {
 
 export interface SceneInputActions {
   advance: boolean;
+  cycleTorpedoLock: boolean;
+  fireTorpedo: boolean;
   focusSubsystem: ShipSubsystemKey | null;
   navigateNext: boolean;
   navigatePrevious: boolean;
@@ -22,6 +24,8 @@ export interface SceneInputActions {
 
 const SCENE_ACTION_BINDINGS = {
   advance: "Enter",
+  cycleTorpedoLock: "Tab",
+  fireTorpedo: "KeyX",
   navigateNext: "ArrowRight",
   navigatePrevious: "ArrowLeft",
   restart: "KeyR",
@@ -61,6 +65,8 @@ export function readSceneInputActions(
 
   return {
     advance: consumeEdge(keyTracker, state, SCENE_ACTION_BINDINGS.advance),
+    cycleTorpedoLock: consumeEdge(keyTracker, state, SCENE_ACTION_BINDINGS.cycleTorpedoLock),
+    fireTorpedo: consumeEdge(keyTracker, state, SCENE_ACTION_BINDINGS.fireTorpedo),
     focusSubsystem,
     navigateNext: consumeEdge(keyTracker, state, SCENE_ACTION_BINDINGS.navigateNext),
     navigatePrevious: consumeEdge(keyTracker, state, SCENE_ACTION_BINDINGS.navigatePrevious),

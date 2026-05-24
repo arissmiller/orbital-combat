@@ -1,6 +1,7 @@
 import {
   parseServerMessage,
   type ClientMessage,
+  type PublicRoomSnapshot,
   type RoomSnapshot,
   type SimulationSnapshot,
 } from "./multiplayer-protocol";
@@ -13,6 +14,7 @@ export interface MultiplayerClientState {
   playerId: string | null;
   displayName: string;
   room: RoomSnapshot | null;
+  availableRooms: PublicRoomSnapshot[];
   latestSnapshot: SimulationSnapshot | null;
   latestInfoMessage: string | null;
   latestErrorMessage: string | null;
@@ -36,6 +38,7 @@ export class BrowserMultiplayerClient {
       playerId: null,
       displayName: sanitizeDisplayName(options.displayName),
       room: null,
+      availableRooms: [],
       latestSnapshot: null,
       latestInfoMessage: null,
       latestErrorMessage: null,
@@ -87,6 +90,7 @@ export class BrowserMultiplayerClient {
       latestInfoMessage: null,
       playerId: null,
       room: null,
+      availableRooms: [],
       latestSnapshot: null,
       estimatedLatencyMs: null,
     });
@@ -115,6 +119,7 @@ export class BrowserMultiplayerClient {
         type: "hello",
         displayName: this.state.displayName,
       });
+      this.requestRoomList();
     });
 
     socket.addEventListener("message", (event) => {
@@ -150,6 +155,11 @@ export class BrowserMultiplayerClient {
         case "room-update":
           this.setState({
             room: message.room,
+          });
+          return;
+        case "room-list":
+          this.setState({
+            availableRooms: message.rooms,
           });
           return;
         case "match-started":
@@ -193,6 +203,7 @@ export class BrowserMultiplayerClient {
         connectionStatus: "disconnected",
         playerId: null,
         room: null,
+        availableRooms: [],
         latestSnapshot: null,
       });
     });
@@ -216,6 +227,7 @@ export class BrowserMultiplayerClient {
       connectionStatus: "disconnected",
       playerId: null,
       room: null,
+      availableRooms: [],
       latestSnapshot: null,
       latestInfoMessage: reason,
     });
@@ -259,6 +271,12 @@ export class BrowserMultiplayerClient {
     this.send({
       type: "ping",
       clientTime: Date.now(),
+    });
+  }
+
+  public requestRoomList(): void {
+    this.send({
+      type: "list-rooms",
     });
   }
 
