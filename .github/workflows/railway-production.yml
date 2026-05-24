@@ -29,7 +29,7 @@ jobs:
 
       - name: Validate Railway config
         env:
-          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_PROD_TOKEN }}
           RAILWAY_PROJECT_ID: ${{ vars.RAILWAY_PROD_PROJECT_ID }}
           RAILWAY_ENVIRONMENT: ${{ vars.RAILWAY_PROD_ENVIRONMENT }}
           RAILWAY_SERVICE: ${{ vars.RAILWAY_PROD_SERVICE }}
@@ -37,7 +37,7 @@ jobs:
           missing=0
 
           if [ -z "$RAILWAY_TOKEN" ]; then
-            echo "Missing required GitHub secret: RAILWAY_TOKEN"
+            echo "Missing required GitHub secret: RAILWAY_PROD_TOKEN"
             missing=1
           fi
 
@@ -62,7 +62,7 @@ jobs:
 
       - name: Deploy to Railway Production
         env:
-          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_PROD_TOKEN }}
           RAILWAY_PROJECT_ID: ${{ vars.RAILWAY_PROD_PROJECT_ID }}
           RAILWAY_ENVIRONMENT: ${{ vars.RAILWAY_PROD_ENVIRONMENT }}
           RAILWAY_SERVICE: ${{ vars.RAILWAY_PROD_SERVICE }}

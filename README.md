@@ -44,12 +44,17 @@ This repo includes a GitHub Actions workflow at `.github/workflows/railway-produ
 It deploys on pushes to `main` (and can also be run manually from the Actions tab).
 
 1. In GitHub, go to `Settings -> Secrets and variables -> Actions`.
-2. Add repository secret `RAILWAY_TOKEN`.
+2. Add repository secret `RAILWAY_PROD_TOKEN`.
 3. Create that token in Railway as a **project token scoped to the `production` environment**.
 4. Add repository variables:
    - `RAILWAY_PROD_PROJECT_ID`
    - `RAILWAY_PROD_ENVIRONMENT` (usually `production`)
    - `RAILWAY_PROD_SERVICE`
+
+For the dev workflow (`.github/workflows/railway-dev.yml`), also add:
+
+- Repository secret `RAILWAY_DEV_TOKEN` (project token scoped to your dev environment)
+- Repository variables `RAILWAY_DEV_PROJECT_ID`, `RAILWAY_DEV_ENVIRONMENT`, and `RAILWAY_DEV_SERVICE`
 
 Production target details (values for the variables above):
 
