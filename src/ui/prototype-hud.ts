@@ -9,6 +9,7 @@ import type {
   GameOverlayState,
   OverlayScoreboardState,
   OverlaySystemPanelState,
+  OverlayVitalsState,
 } from "./game-overlay-store";
 
 type PlayerWeaponMode = "disintegrator" | "disruptor";
@@ -16,6 +17,7 @@ type ShipSystemPanelKey = "engines" | "scanners" | "weapons" | "defenses";
 
 interface BuildPrototypeHudStateOptions {
   hudVisible: boolean;
+  showLeaveGameButton?: boolean;
   isCrashed: boolean;
   title: string;
   fpsSmoothed: number;
@@ -33,6 +35,7 @@ interface BuildPrototypeHudStateOptions {
   mission: MissionRuntimeSnapshot;
   warnings: readonly GameWarningState[];
   audioCueIds: readonly string[];
+  playerVitals?: OverlayVitalsState | null;
 }
 
 const SYSTEM_PANEL_CONFIG: readonly {
@@ -63,6 +66,7 @@ export function buildPrototypeHudState(
 
   return {
     hudVisible: options.hudVisible && !options.isCrashed,
+    showLeaveGameButton: options.showLeaveGameButton ?? false,
     title: options.title,
     fpsText: `${options.fpsSmoothed.toFixed(0)} FPS`,
     scoreboard: options.scoreboardVisible
@@ -124,6 +128,7 @@ export function buildPrototypeHudState(
       options.weaponArmed,
       options.trainingMissionEnabled,
     ),
+    vitals: options.playerVitals ?? null,
   };
 }
 

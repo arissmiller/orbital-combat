@@ -104,6 +104,7 @@ export interface SimPlayerSnapshot {
   superBurnActive?: boolean;
   systems?: SimPlayerSystemsSnapshot;
   life?: SimPlayerLifeSnapshot;
+  scanner?: SimPlayerScannerSnapshot;
   warnings?: SimPlayerWarning[];
 }
 
@@ -125,6 +126,23 @@ export interface SimPlayerLifeSnapshot {
   respawnTimerSeconds: number;
   respawnGraceSeconds: number;
   deaths: number;
+  health: number;
+  maxHealth: number;
+}
+
+export interface SimPlayerScannerContactSnapshot {
+  targetPlayerId: string;
+  distance: number;
+  inRange: boolean;
+  visible: boolean;
+  occludedByCelestialId: string | null;
+  lockProgress: number;
+  registered: boolean;
+}
+
+export interface SimPlayerScannerSnapshot {
+  range: number;
+  contacts: SimPlayerScannerContactSnapshot[];
 }
 
 export type { SimCelestialBodySnapshot } from "./multiplayer-map.js";
@@ -564,6 +582,7 @@ function parseSimulationSnapshot(raw: unknown): SimulationSnapshot | null {
       superBurnActive: parseOptionalBoolean(playerSnapshot.superBurnActive),
       systems: parseOptionalSimPlayerSystemsSnapshot(playerSnapshot.systems),
       life: parseOptionalSimPlayerLifeSnapshot(playerSnapshot.life),
+      scanner: parseOptionalSimPlayerScannerSnapshot(playerSnapshot.scanner),
       warnings: parseOptionalSimPlayerWarnings(playerSnapshot.warnings),
     });
   }
@@ -761,6 +780,68 @@ function parseOptionalSimPlayerWarnings(
   return warnings;
 }
 
+function parseOptionalSimPlayerScannerSnapshot(
+  value: unknown,
+): SimPlayerScannerSnapshot | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== "object" || value === null) {
+    return undefined;
+  }
+
+  const scanner = value as Record<string, unknown>;
+  if (typeof scanner.range !== "number" || !Array.isArray(scanner.contacts)) {
+    return undefined;
+  }
+
+  const contacts: SimPlayerScannerContactSnapshot[] = [];
+  for (const rawContact of scanner.contacts) {
+    const contact = parseSimPlayerScannerContactSnapshot(rawContact);
+    if (!contact) {
+      continue;
+    }
+    contacts.push(contact);
+  }
+
+  return {
+    range: scanner.range,
+    contacts,
+  };
+}
+
+function parseSimPlayerScannerContactSnapshot(
+  value: unknown,
+): SimPlayerScannerContactSnapshot | null {
+  if (typeof value !== "object" || value === null) {
+    return null;
+  }
+
+  const contact = value as Record<string, unknown>;
+  if (
+    typeof contact.targetPlayerId !== "string"
+    || typeof contact.distance !== "number"
+    || typeof contact.inRange !== "boolean"
+    || typeof contact.visible !== "boolean"
+    || typeof contact.lockProgress !== "number"
+    || typeof contact.registered !== "boolean"
+    || (contact.occludedByCelestialId !== null
+      && typeof contact.occludedByCelestialId !== "string")
+  ) {
+    return null;
+  }
+
+  return {
+    targetPlayerId: contact.targetPlayerId,
+    distance: contact.distance,
+    inRange: contact.inRange,
+    visible: contact.visible,
+    occludedByCelestialId: contact.occludedByCelestialId,
+    lockProgress: contact.lockProgress,
+    registered: contact.registered,
+  };
+}
+
 function parseOptionalSimPlayerLifeSnapshot(
   value: unknown,
 ): SimPlayerLifeSnapshot | undefined {
@@ -777,6 +858,8 @@ function parseOptionalSimPlayerLifeSnapshot(
     || typeof life.respawnTimerSeconds !== "number"
     || typeof life.respawnGraceSeconds !== "number"
     || typeof life.deaths !== "number"
+    || typeof life.health !== "number"
+    || typeof life.maxHealth !== "number"
   ) {
     return undefined;
   }
@@ -786,6 +869,8 @@ function parseOptionalSimPlayerLifeSnapshot(
     respawnTimerSeconds: life.respawnTimerSeconds,
     respawnGraceSeconds: life.respawnGraceSeconds,
     deaths: life.deaths,
+    health: life.health,
+    maxHealth: life.maxHealth,
   };
 }
 

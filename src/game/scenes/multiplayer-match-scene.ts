@@ -40,9 +40,14 @@ import type { Vector2Like } from "../physics/vector2";
 import {
   createShipSystemsState,
   focusSubsystem,
+  getWeaponRangeMultiplier,
   type ShipSystemsState,
 } from "../ships/systems";
-import { drawEngineCompass } from "../rendering/prototype-overlays";
+import {
+  drawEngineCompass,
+  drawLikelyEnemyMarkers,
+  drawScannerRadius,
+} from "../rendering/prototype-overlays";
 import {
   WORLD_OVERLAY_STYLES,
   getBurnForecastColor,
@@ -78,6 +83,7 @@ const FORECAST_STEPS = 84;
 const FORECAST_STEP_SECONDS = 1 / 20;
 const FORECAST_GRAVITY_EPSILON = 0.000001;
 const FORECAST_COLLISION_STOP_SPEED = 0.01;
+const BASE_DISINTEGRATOR_RANGE = 280;
 
 const EMPTY_MULTIPLAYER_MISSION_SNAPSHOT: MissionRuntimeSnapshot = {
   title: "",
@@ -110,6 +116,9 @@ export function mountMultiplayerMatchScene(context: SceneContext): SceneHandle {
   const orbitLayer = new Graphics();
   const bodyLayer = new Container();
   const playerLayer = new Container();
+  const scannerRadiusOverlay = new Graphics();
+  const likelyEnemyOverlay = new Graphics();
+  const scannerContactsOverlay = new Graphics();
   const forecastOverlay = new Graphics();
   const engineCompassOverlay = new Graphics();
 
@@ -118,7 +127,10 @@ export function mountMultiplayerMatchScene(context: SceneContext): SceneHandle {
   root.addChild(engineCompassOverlay);
   world.addChild(orbitLayer);
   world.addChild(bodyLayer);
+  world.addChild(scannerRadiusOverlay);
   world.addChild(playerLayer);
+  world.addChild(likelyEnemyOverlay);
+  world.addChild(scannerContactsOverlay);
   world.addChild(forecastOverlay);
   context.app.stage.addChild(root);
   const worldPresenter = createMultiplayerWorldPresenter({
@@ -154,6 +166,8 @@ export function mountMultiplayerMatchScene(context: SceneContext): SceneHandle {
   let localThrustHeadingRadians: number | null = null;
   let localPlayerAlive = true;
   let localRespawnTimerSeconds = 0;
+  let localHealth = 100;
+  let localMaxHealth = 100;
   let smoothedThrustHeading: number | null = null;
   let smoothedThrottle = 0;
   let overlayElapsedSeconds = 0;
@@ -273,20 +287,23 @@ export function mountMultiplayerMatchScene(context: SceneContext): SceneHandle {
 
     if (!frame) {
       clearNavigationHud();
+      clearScannerHud();
       return;
     }
 
     const rosterNamesByPlayerId = new Map(
       latestRoom?.players.map((player) => [player.id, player.displayName]) ?? [],
     );
+    const renderFrame = filterFrameByScannerRegistration(frame, selfPlayerId);
     worldPresenter.render({
-      frame,
+      frame: renderFrame,
       rosterNamesByPlayerId,
       selfPlayerId,
       tickerDeltaTime: ticker.deltaTime,
       viewportWidth: context.app.renderer.width,
       viewportHeight: context.app.renderer.height,
     });
+    drawScannerHud(frame);
     drawNavigationHud(frame, flightInput, ticker.deltaTime);
   };
 
@@ -342,6 +359,8 @@ export function mountMultiplayerMatchScene(context: SceneContext): SceneHandle {
 
     localPlayerAlive = selfPlayer.life?.alive ?? true;
     localRespawnTimerSeconds = selfPlayer.life?.respawnTimerSeconds ?? 0;
+    localHealth = selfPlayer.life?.health ?? localMaxHealth;
+    localMaxHealth = selfPlayer.life?.maxHealth ?? 100;
     localEngineThrottle = localPlayerAlive ? (selfPlayer.throttle ?? 0) : 0;
     localThrustHeadingRadians = localPlayerAlive
       ? (selfPlayer.thrustHeading ?? null)
@@ -355,6 +374,92 @@ export function mountMultiplayerMatchScene(context: SceneContext): SceneHandle {
   const clearNavigationHud = (): void => {
     forecastOverlay.clear();
     engineCompassOverlay.clear();
+  };
+
+  const clearScannerHud = (): void => {
+    scannerRadiusOverlay.clear();
+    likelyEnemyOverlay.clear();
+    scannerContactsOverlay.clear();
+  };
+
+  const drawScannerHud = (frame: ResolvedSimulationFrame): void => {
+    if (!hudVisible || !selfPlayerId) {
+      clearScannerHud();
+      return;
+    }
+
+    const selfPlayer = frame.players.find((player) => player.playerId === selfPlayerId);
+    if (
+      !selfPlayer ||
+      selfPlayer.life?.alive === false ||
+      !selfPlayer.scanner ||
+      selfPlayer.scanner.range <= 0
+    ) {
+      clearScannerHud();
+      return;
+    }
+
+    const scannerStyle = WORLD_OVERLAY_STYLES.scannerRadius;
+    const scannerContactsStyle = WORLD_OVERLAY_STYLES.enemyClassStyles.raider;
+    const contactByPlayerId = new Map(
+      selfPlayer.scanner.contacts.map((contact) => [contact.targetPlayerId, contact] as const),
+    );
+    const candidateContacts = frame.players.filter((player) => {
+      if (player.playerId === selfPlayer.playerId || player.life?.alive === false) {
+        return false;
+      }
+      return contactByPlayerId.has(player.playerId);
+    });
+    const visibleContacts = candidateContacts.filter((player) => {
+      const contact = contactByPlayerId.get(player.playerId);
+      return contact?.visible === true;
+    });
+    const occludedContacts = candidateContacts.filter((player) => {
+      const contact = contactByPlayerId.get(player.playerId);
+      return contact?.inRange === true && contact.visible === false && contact.registered === false;
+    });
+
+    const disintegratorRange =
+      BASE_DISINTEGRATOR_RANGE * getWeaponRangeMultiplier(localShipSystems);
+    const scannerOccluders = frame.celestialBodies.map((body) => ({
+      config: { id: body.id },
+      body: {
+        id: body.id,
+        position: { x: body.renderX, y: body.renderY },
+        radius: body.radius,
+      },
+    }));
+    drawScannerRadius(
+      scannerRadiusOverlay,
+      { x: selfPlayer.renderX, y: selfPlayer.renderY },
+      selfPlayer.scanner.range,
+      disintegratorRange,
+      scannerOccluders as unknown as Parameters<typeof drawScannerRadius>[4],
+    );
+
+    drawLikelyEnemyMarkers(
+      likelyEnemyOverlay,
+      occludedContacts.map((player) => ({
+        position: { x: player.renderX, y: player.renderY },
+        radius: 8,
+        enemyClass: "raider" as const,
+      })),
+    );
+
+    scannerContactsOverlay.clear();
+    for (const player of visibleContacts) {
+      scannerContactsOverlay.circle(player.renderX, player.renderY, 8);
+      scannerContactsOverlay.stroke({
+        color: scannerContactsStyle.contactColor,
+        width: WORLD_OVERLAY_STYLES.scannerContacts.strokeWidth,
+        alpha: WORLD_OVERLAY_STYLES.scannerContacts.strokeAlpha,
+      });
+      scannerContactsOverlay.circle(player.renderX, player.renderY, 2.5);
+      scannerContactsOverlay.fill({
+        color: scannerContactsStyle.contactColor,
+        alpha: scannerContactsStyle.contactFillAlpha,
+      });
+    }
   };
 
   const drawNavigationHud = (
@@ -587,6 +692,7 @@ export function mountMultiplayerMatchScene(context: SceneContext): SceneHandle {
     setGameOverlayState(
       buildPrototypeHudState({
         hudVisible,
+        showLeaveGameButton: true,
         isCrashed: false,
         title: `Room ${roomCode} | ${mapName}`,
         fpsSmoothed,
@@ -604,6 +710,14 @@ export function mountMultiplayerMatchScene(context: SceneContext): SceneHandle {
         mission: EMPTY_MULTIPLAYER_MISSION_SNAPSHOT,
         warnings,
         audioCueIds: [],
+        playerVitals: selfPlayerId
+          ? {
+              health: localHealth,
+              maxHealth: localMaxHealth,
+              shieldCharge: localShipSystems.defenses.charge,
+              shieldMaxCharge: localShipSystems.defenses.maxCharge,
+            }
+          : null,
       }),
     );
   };
@@ -832,6 +946,8 @@ function toPredictedPlayerState(
           respawnTimerSeconds: player.life.respawnTimerSeconds,
           respawnGraceSeconds: player.life.respawnGraceSeconds,
           deaths: player.life.deaths,
+          health: player.life.health,
+          maxHealth: player.life.maxHealth,
         }
       : undefined,
     throttle: player.throttle,
@@ -1032,6 +1148,43 @@ function distanceBetween(a: Vector2Like, b: Vector2Like): number {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
+}
+
+function filterFrameByScannerRegistration(
+  frame: ResolvedSimulationFrame,
+  selfPlayerId: string | null,
+): ResolvedSimulationFrame {
+  if (!selfPlayerId) {
+    return frame;
+  }
+
+  const selfPlayer = frame.players.find((player) => player.playerId === selfPlayerId);
+  if (!selfPlayer || !selfPlayer.scanner) {
+    return frame;
+  }
+
+  const contactByPlayerId = new Map(
+    selfPlayer.scanner.contacts.map((contact) => [contact.targetPlayerId, contact] as const),
+  );
+  const filteredPlayers = frame.players.filter((player) => {
+    if (player.playerId === selfPlayerId) {
+      return true;
+    }
+    if (player.life?.alive === false) {
+      return false;
+    }
+    return contactByPlayerId.get(player.playerId)?.registered === true;
+  });
+
+  if (filteredPlayers.length === frame.players.length) {
+    return frame;
+  }
+
+  return {
+    tick: frame.tick,
+    players: filteredPlayers,
+    celestialBodies: frame.celestialBodies,
+  };
 }
 
 function pseudoRandom(seed: number): number {

@@ -78,8 +78,16 @@ export interface OverlayWeaponAudioState {
   disintegratorFiring: boolean;
 }
 
+export interface OverlayVitalsState {
+  health: number;
+  maxHealth: number;
+  shieldCharge: number;
+  shieldMaxCharge: number;
+}
+
 export interface GameOverlayState {
   hudVisible: boolean;
+  showLeaveGameButton: boolean;
   title: string;
   fpsText: string;
   scoreboard: OverlayScoreboardState | null;
@@ -90,10 +98,12 @@ export interface GameOverlayState {
   engineAudio: OverlayEngineAudioState | null;
   weaponAudio: OverlayWeaponAudioState | null;
   systems: OverlaySystemPanelState[];
+  vitals: OverlayVitalsState | null;
 }
 
 const DEFAULT_OVERLAY_STATE: GameOverlayState = {
   hudVisible: false,
+  showLeaveGameButton: false,
   title: "",
   fpsText: "",
   scoreboard: null,
@@ -104,6 +114,7 @@ const DEFAULT_OVERLAY_STATE: GameOverlayState = {
   engineAudio: null,
   weaponAudio: null,
   systems: [],
+  vitals: null,
 };
 
 let overlayState: GameOverlayState = DEFAULT_OVERLAY_STATE;

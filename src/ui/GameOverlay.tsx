@@ -5,6 +5,7 @@ import {
   type OverlayMissionStepState,
   type OverlayScoreboardState,
   type OverlaySystemPanelState,
+  type OverlayVitalsState,
   useGameOverlayState,
 } from "./game-overlay-store";
 import { RichGameText } from "./RichGameText";
@@ -60,6 +61,9 @@ export function GameOverlay(): ReactElement | null {
           </div>
         ) : null}
         <div className="game-overlay__systems">
+          {overlayState.vitals ? (
+            <VitalsPanel vitals={overlayState.vitals} />
+          ) : null}
           {overlayState.systems.map((system) => (
             <SystemPanel key={system.key} system={system} />
           ))}
@@ -265,6 +269,39 @@ function BriefingVisual(props: {
         </div>
       );
   }
+}
+
+function VitalsPanel(props: { vitals: OverlayVitalsState }): ReactElement {
+  const { vitals } = props;
+  const healthFraction = vitals.maxHealth > 0 ? vitals.health / vitals.maxHealth : 0;
+  const shieldFraction = vitals.shieldMaxCharge > 0
+    ? vitals.shieldCharge / vitals.shieldMaxCharge
+    : 0;
+  const healthColor = healthFraction > 0.6 ? "#6ae78c" : healthFraction > 0.3 ? "#ffbd59" : "#ff7b72";
+  return (
+    <section
+      className="game-panel game-panel--system game-panel--vitals"
+      style={createPanelStyle(healthColor)}
+    >
+      <div className="game-panel__badge">HULL / SH</div>
+      <div className="game-panel__meters">
+        <Meter
+          meter={{
+            value: healthFraction,
+            fillColor: healthColor,
+            backgroundColor: "#17202b",
+          }}
+        />
+        <Meter
+          meter={{
+            value: shieldFraction,
+            fillColor: "#78e8ff",
+            backgroundColor: "#0d1e2e",
+          }}
+        />
+      </div>
+    </section>
+  );
 }
 
 function SystemPanel(props: {

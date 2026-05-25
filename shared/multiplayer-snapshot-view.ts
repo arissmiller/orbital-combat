@@ -152,6 +152,15 @@ function buildProjectedFrame(
     radius: body.radius,
     orbitEccentricity: body.orbitEccentricity,
   }));
+  const playerMetadataById = new Map(
+    snapshot.players.map((player) => [
+      player.playerId,
+      {
+        scanner: player.scanner,
+        warnings: player.warnings,
+      },
+    ] as const),
+  );
   const playersById = new Map<string, MultiplayerSimPlayerState>();
   for (const player of snapshot.players) {
     playersById.set(player.playerId, {
@@ -171,6 +180,8 @@ function buildProjectedFrame(
             respawnTimerSeconds: player.life.respawnTimerSeconds,
             respawnGraceSeconds: player.life.respawnGraceSeconds,
             deaths: player.life.deaths,
+            health: player.life.health,
+            maxHealth: player.life.maxHealth,
           }
         : undefined,
       systems: player.systems
@@ -210,6 +221,7 @@ function buildProjectedFrame(
   );
   const players: ResolvedSimPlayerState[] = [];
   for (const player of playersById.values()) {
+    const metadata = playerMetadataById.get(player.playerId);
     players.push({
       playerId: player.playerId,
       x: player.x,
@@ -227,6 +239,8 @@ function buildProjectedFrame(
             respawnTimerSeconds: player.life.respawnTimerSeconds,
             respawnGraceSeconds: player.life.respawnGraceSeconds,
             deaths: player.life.deaths,
+            health: player.life.health,
+            maxHealth: player.life.maxHealth,
           }
         : undefined,
       systems: player.systems
@@ -249,6 +263,29 @@ function buildProjectedFrame(
               maxCharge: player.systems.defenses.maxCharge,
             },
           }
+        : undefined,
+      scanner: metadata?.scanner
+        ? {
+            range: metadata.scanner.range,
+            contacts: metadata.scanner.contacts.map((contact) => ({
+              targetPlayerId: contact.targetPlayerId,
+              distance: contact.distance,
+              inRange: contact.inRange,
+              visible: contact.visible,
+              occludedByCelestialId: contact.occludedByCelestialId,
+              lockProgress: contact.lockProgress,
+              registered: contact.registered,
+            })),
+          }
+        : undefined,
+      warnings: metadata?.warnings
+        ? metadata.warnings.map((warning) => ({
+            id: warning.id,
+            title: warning.title,
+            message: warning.message,
+            accentColor: warning.accentColor,
+            priority: warning.priority,
+          }))
         : undefined,
       renderX: player.x,
       renderY: player.y,

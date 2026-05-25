@@ -46,6 +46,8 @@ export interface MultiplayerSimPlayerLifeState {
   respawnTimerSeconds: number;
   respawnGraceSeconds: number;
   deaths: number;
+  health: number;
+  maxHealth: number;
 }
 
 const STABLE_HEADING_MIN_SPEED = 0.18;
@@ -357,12 +359,16 @@ function createShipSystemsState(): ShipSystemsState {
   };
 }
 
+const PLAYER_MAX_HEALTH = 100;
+
 function createDefaultPlayerLifeState(): MultiplayerSimPlayerLifeState {
   return {
     alive: true,
     respawnTimerSeconds: 0,
     respawnGraceSeconds: 0,
     deaths: 0,
+    health: PLAYER_MAX_HEALTH,
+    maxHealth: PLAYER_MAX_HEALTH,
   };
 }
 
@@ -383,6 +389,8 @@ function buildSimPlayerLifeSnapshot(
     respawnTimerSeconds: round3(Math.max(0, life.respawnTimerSeconds)),
     respawnGraceSeconds: round3(Math.max(0, life.respawnGraceSeconds)),
     deaths: Math.max(0, Math.trunc(life.deaths)),
+    health: round3(clamp(life.health, 0, life.maxHealth)),
+    maxHealth: life.maxHealth,
   };
 }
 
