@@ -174,6 +174,9 @@ function buildProjectedFrame(
       throttle: player.throttle,
       thrustHeading: player.thrustHeading,
       superBurnActive: player.superBurnActive,
+      weaponArmed: player.weaponArmed,
+      weaponMode: player.weaponMode,
+      weaponFiring: player.weaponFiring,
       life: player.life
         ? {
             alive: player.life.alive,
@@ -233,6 +236,9 @@ function buildProjectedFrame(
       throttle: player.throttle,
       thrustHeading: player.thrustHeading,
       superBurnActive: player.superBurnActive,
+      weaponArmed: player.weaponArmed,
+      weaponMode: player.weaponMode,
+      weaponFiring: player.weaponFiring,
       life: player.life
         ? {
             alive: player.life.alive,

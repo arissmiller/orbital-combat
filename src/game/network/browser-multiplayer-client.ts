@@ -38,6 +38,8 @@ export interface MultiplayerInputCommand {
   firePrimary: boolean;
   fireSecondary: boolean;
   focusSubsystem?: "engines" | "scanners" | "weapons" | "defenses";
+  weaponArmed?: boolean;
+  weaponMode?: "disintegrator" | "disruptor";
 }
 
 export class BrowserMultiplayerClient {
@@ -309,6 +311,8 @@ export class BrowserMultiplayerClient {
       firePrimary: command.firePrimary,
       fireSecondary: command.fireSecondary,
       focusSubsystem: command.focusSubsystem,
+      weaponArmed: command.weaponArmed,
+      weaponMode: command.weaponMode,
     });
   }
 

@@ -275,6 +275,12 @@ interface PlayerWeaponFireResult {
   neutralizedTorpedoCount: number;
 }
 
+interface PlayerTorpedoSalvoState {
+  clickTargetPosition: Vector2Like;
+  shotsRemaining: number;
+  nextLaunchAtSeconds: number;
+}
+
 interface RenderedPathState {
   points: Vector2Like[];
   sourcePositions: readonly Vector2Like[] | null;
@@ -380,11 +386,13 @@ const PLAYER_DEATH_AUDIO_CUE_ID = "player-death";
 const HELION_WEAPONS_TUTORIAL_SCENARIO_ID = "helion-weapons-training";
 const HELION_WEAPONS_TUTORIAL_REQUIRED_INTERCEPTS = 4;
 const TUTORIAL_COMPLETE_NOTIFICATION_SECONDS = 4;
-const PLAYER_TORPEDO_SPEED = 248;
+const PLAYER_TORPEDO_LAUNCH_SPEED = 42;
 const PLAYER_TORPEDO_THRUST = 460;
-const PLAYER_TORPEDO_TURN_RATE = 3.8;
+const PLAYER_TORPEDO_TURN_RATE = 1.35;
 const PLAYER_TORPEDO_COOLDOWN_SECONDS = 1.15;
 const PLAYER_TORPEDO_WEAPON_CHARGE_COST = 0.18;
+const PLAYER_TORPEDO_SALVO_COUNT = 3;
+const PLAYER_TORPEDO_SALVO_INTERVAL_SECONDS = 0.22;
 const MAP_KILL_BORDER_PADDING = 1800;
 const MAP_KILL_BORDER_MIN_RADIUS = 5400;
 const MAP_KILL_BORDER_ARROW_DISTANCE = 540;
@@ -1589,6 +1597,8 @@ export function mountPrototypeScene(
   let weaponArmed = false;
   let weaponMode: PlayerWeaponMode = "disintegrator";
   let playerTorpedoCooldownSeconds = 0;
+  let queuedPlayerTorpedoClickTarget: Vector2Like | null = null;
+  let pendingPlayerTorpedoSalvo: PlayerTorpedoSalvoState | null = null;
   let selectedPlayerTorpedoLockTargetId: string | null = null;
   const trainingMissionState = createOrbitalFlightTrainingState();
   const nadirRandomGateRunState = createNadirRandomGateRunState();
@@ -1634,6 +1644,30 @@ export function mountPrototypeScene(
   });
 
   keyTracker.attach(window);
+  const handleCanvasPointerDown = (event: PointerEvent) => {
+    if (event.button !== 0) {
+      return;
+    }
+
+    const canvasBounds = app.canvas.getBoundingClientRect();
+    if (canvasBounds.width <= 0 || canvasBounds.height <= 0) {
+      return;
+    }
+
+    const screenPosition = {
+      x: ((event.clientX - canvasBounds.left) / canvasBounds.width) * app.screen.width,
+      y: ((event.clientY - canvasBounds.top) / canvasBounds.height) * app.screen.height,
+    };
+    queuedPlayerTorpedoClickTarget = convertScreenPointToWorldPoint(
+      screenPosition,
+      getScreenCenter(),
+      cameraCenter,
+      cameraZoom,
+    );
+  };
+  app.canvas.addEventListener("pointerdown", handleCanvasPointerDown, {
+    passive: true,
+  });
 
   applyCelestialState(
     simulation,
@@ -1705,12 +1739,31 @@ export function mountPrototypeScene(
     const enginesOnlyTraining = customTrainingMissionEnabled;
     const missionPauseActive = missionControl.pauseGameplay;
     const gameplayInputBlocked = pauseMenuOpen || missionControl.blockPlayerInput;
+    const clickTorpedoTarget = queuedPlayerTorpedoClickTarget;
+    queuedPlayerTorpedoClickTarget = null;
     const playerRequestedTorpedoFire =
       !enginesOnlyTraining &&
       sceneActions.fireTorpedo &&
       !interceptorBody.crashed &&
       !gameplayInputBlocked &&
       weaponArmed;
+    const playerRequestedTorpedoSalvo =
+      !enginesOnlyTraining &&
+      clickTorpedoTarget !== null &&
+      !interceptorBody.crashed &&
+      !gameplayInputBlocked &&
+      weaponArmed;
+    if (playerRequestedTorpedoSalvo && clickTorpedoTarget) {
+      pendingPlayerTorpedoSalvo = {
+        clickTargetPosition: clickTorpedoTarget,
+        shotsRemaining: PLAYER_TORPEDO_SALVO_COUNT,
+        nextLaunchAtSeconds: elapsedSeconds + playerTorpedoCooldownSeconds,
+      };
+      playerTorpedoCooldownSeconds = Math.max(
+        playerTorpedoCooldownSeconds,
+        PLAYER_TORPEDO_COOLDOWN_SECONDS,
+      );
+    }
     if (sceneActions.restart) {
       restartScenario({
         simulation,
@@ -1754,6 +1807,8 @@ export function mountPrototypeScene(
           torpedoLockStates.clear();
           announcedDefensiveLockIds.clear();
           playerTorpedoCooldownSeconds = 0;
+          queuedPlayerTorpedoClickTarget = null;
+          pendingPlayerTorpedoSalvo = null;
           selectedPlayerTorpedoLockTargetId = null;
           for (const missile of missileVisuals) {
             simulation.removeBody(missile.id);
@@ -1793,6 +1848,8 @@ export function mountPrototypeScene(
       helionTargetsCleared = false;
       helionInterceptedTorpedoes = 0;
       playerTorpedoCooldownSeconds = 0;
+      queuedPlayerTorpedoClickTarget = null;
+      pendingPlayerTorpedoSalvo = null;
       selectedPlayerTorpedoLockTargetId = null;
       hasHandledCrash = false;
       crashSequenceElapsed = 0;
@@ -2168,6 +2225,10 @@ export function mountPrototypeScene(
               torpedoLockStates.clear();
               announcedDefensiveLockIds.clear();
               defensiveLockAlertSeconds = 0;
+              playerTorpedoCooldownSeconds = 0;
+              queuedPlayerTorpedoClickTarget = null;
+              pendingPlayerTorpedoSalvo = null;
+              selectedPlayerTorpedoLockTargetId = null;
               for (const missile of missileVisuals) {
                 simulation.removeBody(missile.id);
                 world.removeChild(missile.sprite);
@@ -2231,6 +2292,10 @@ export function mountPrototypeScene(
               torpedoLockStates.clear();
               announcedDefensiveLockIds.clear();
               defensiveLockAlertSeconds = 0;
+              playerTorpedoCooldownSeconds = 0;
+              queuedPlayerTorpedoClickTarget = null;
+              pendingPlayerTorpedoSalvo = null;
+              selectedPlayerTorpedoLockTargetId = null;
               for (const missile of missileVisuals) {
                 simulation.removeBody(missile.id);
                 world.removeChild(missile.sprite);
@@ -2268,6 +2333,10 @@ export function mountPrototypeScene(
         helionWeaponsBoostedEver = false;
         helionTargetsCleared = false;
         helionInterceptedTorpedoes = 0;
+        playerTorpedoCooldownSeconds = 0;
+        queuedPlayerTorpedoClickTarget = null;
+        pendingPlayerTorpedoSalvo = null;
+        selectedPlayerTorpedoLockTargetId = null;
         hasHandledCrash = false;
         crashSequenceElapsed = 0;
         autoRestartTimer = 0;
@@ -2855,7 +2924,11 @@ export function mountPrototypeScene(
       weaponMode === "disintegrator"
         ? (weaponArmed ? eligibleDisintegratorTargets : [])
         : (weaponArmed ? eligibleDisruptorTargets : []);
-    if (playerRequestedTorpedoFire && playerTorpedoCooldownSeconds <= 0) {
+    if (
+      playerRequestedTorpedoFire &&
+      playerTorpedoCooldownSeconds <= 0 &&
+      pendingPlayerTorpedoSalvo === null
+    ) {
       const fireResult = firePlayerTorpedo({
         simulation,
         world,
@@ -2867,9 +2940,56 @@ export function mountPrototypeScene(
         nextMissileIdRef,
         elapsedSeconds,
         travelHeading: stableMotionHeading,
+        clickTargetPosition: null,
       });
       if (fireResult.fired) {
         playerTorpedoCooldownSeconds = PLAYER_TORPEDO_COOLDOWN_SECONDS;
+      }
+    }
+    if (
+      pendingPlayerTorpedoSalvo &&
+      !pauseActive &&
+      !isCrashed &&
+      !gameplayInputBlocked &&
+      weaponArmed
+    ) {
+      let launchesThisFrame = 0;
+      while (
+        pendingPlayerTorpedoSalvo &&
+        pendingPlayerTorpedoSalvo.shotsRemaining > 0 &&
+        pendingPlayerTorpedoSalvo.nextLaunchAtSeconds <= elapsedSeconds &&
+        launchesThisFrame < PLAYER_TORPEDO_SALVO_COUNT
+      ) {
+        const fireResult = firePlayerTorpedo({
+          simulation,
+          world,
+          shipSystems,
+          interceptorBody,
+          targetContacts: torpedoLockedDefenseTargets,
+          selectedTargetId: selectedPlayerTorpedoLockTargetId,
+          missileVisuals,
+          nextMissileIdRef,
+          elapsedSeconds,
+          travelHeading: stableMotionHeading,
+          clickTargetPosition: pendingPlayerTorpedoSalvo.clickTargetPosition,
+        });
+        if (!fireResult.fired) {
+          pendingPlayerTorpedoSalvo = null;
+          break;
+        }
+
+        launchesThisFrame += 1;
+        pendingPlayerTorpedoSalvo.shotsRemaining -= 1;
+        if (pendingPlayerTorpedoSalvo.shotsRemaining <= 0) {
+          pendingPlayerTorpedoSalvo = null;
+          playerTorpedoCooldownSeconds = Math.max(
+            playerTorpedoCooldownSeconds,
+            PLAYER_TORPEDO_COOLDOWN_SECONDS,
+          );
+        } else {
+          pendingPlayerTorpedoSalvo.nextLaunchAtSeconds +=
+            PLAYER_TORPEDO_SALVO_INTERVAL_SECONDS;
+        }
       }
     }
     updateDisintegratorEngagementStates(
@@ -3658,7 +3778,7 @@ export function mountPrototypeScene(
         ? "Systems: 1 engines, 2 scanners, 3 weapons, 4 defenses"
         : null,
       hudConfig.telemetry.utility
-        ? `Utility: H HUD, \` debug, F arm weapon, G switch weapon, Tab cycle torpedo lock, X fire torpedo, M tactical view, Esc menu, R restart${missionPauseActive ? ", Enter continue" : ""}`
+        ? `Utility: H HUD, \` debug, F arm weapon, G switch weapon, Tab cycle torpedo lock, X fire torpedo, Left click torpedo salvo, M tactical view, Esc menu, R restart${missionPauseActive ? ", Enter continue" : ""}`
         : null,
     ].filter((line): line is string => line !== null);
     const audioCueIds: string[] = [];
@@ -3707,6 +3827,7 @@ export function mountPrototypeScene(
       app.ticker.remove(tickScene);
       unsubscribeSceneEvents();
       keyTracker.detach(window);
+      app.canvas.removeEventListener("pointerdown", handleCanvasPointerDown);
       sceneRoot.destroy({
         children: true,
       });
@@ -3957,16 +4078,30 @@ function firePlayerTorpedo(options: {
   nextMissileIdRef: { value: number };
   elapsedSeconds: number;
   travelHeading: number;
+  clickTargetPosition: Vector2Like | null;
 }): { fired: boolean } {
   const availableTargets = options.targetContacts.filter(
     (contact) => !contact.visual.destroyed,
   );
-  const targetContact = options.selectedTargetId
-    ? availableTargets.find(
-        (contact) => contact.visual.config.id === options.selectedTargetId,
-      ) ?? availableTargets[0]
-    : availableTargets[0];
-  if (!targetContact || !options.interceptorBody.propulsion) {
+  const targetContact = options.clickTargetPosition
+    ? null
+    : options.selectedTargetId
+      ? availableTargets.find(
+          (contact) => contact.visual.config.id === options.selectedTargetId,
+        ) ?? availableTargets[0]
+      : availableTargets[0];
+  const targetPosition = options.clickTargetPosition
+    ? {
+        x: options.clickTargetPosition.x,
+        y: options.clickTargetPosition.y,
+      }
+    : targetContact
+      ? {
+          x: targetContact.visual.body.position.x,
+          y: targetContact.visual.body.position.y,
+        }
+      : null;
+  if (!targetPosition || !options.interceptorBody.propulsion) {
     return { fired: false };
   }
 
@@ -3977,33 +4112,13 @@ function firePlayerTorpedo(options: {
     return { fired: false };
   }
 
-  const launchHeading = Math.hypot(
-    options.interceptorBody.velocity.x,
-    options.interceptorBody.velocity.y,
-  ) > 0.01
-    ? Math.atan2(
-        options.interceptorBody.velocity.y,
-        options.interceptorBody.velocity.x,
-      )
+  const targetOffset = {
+    x: targetPosition.x - options.interceptorBody.position.x,
+    y: targetPosition.y - options.interceptorBody.position.y,
+  };
+  const launchHeading = Math.hypot(targetOffset.x, targetOffset.y) > 0.01
+    ? Math.atan2(targetOffset.y, targetOffset.x)
     : options.travelHeading;
-  const targetHeading = Math.atan2(
-    targetContact.visual.body.position.y - options.interceptorBody.position.y,
-    targetContact.visual.body.position.x - options.interceptorBody.position.x,
-  );
-  const headingDelta = Math.abs(normalizeAngle(targetHeading - launchHeading));
-  const distanceToTarget = Math.max(
-    1,
-    distanceBetween(
-      options.interceptorBody.position,
-      targetContact.visual.body.position,
-    ),
-  );
-  const estimatedTravelSeconds = distanceToTarget / PLAYER_TORPEDO_SPEED;
-  const maxTurnRadians =
-    PLAYER_TORPEDO_TURN_RATE * Math.max(0.35, estimatedTravelSeconds);
-  if (headingDelta > maxTurnRadians + Math.PI / 36) {
-    return { fired: false };
-  }
 
   options.shipSystems.weapons.charge = Math.max(
     0,
@@ -4032,8 +4147,10 @@ function firePlayerTorpedo(options: {
     collisionExclusions: [options.interceptorBody.id],
     position: launchPosition,
     velocity: {
-      x: options.interceptorBody.velocity.x + launchDirection.x * PLAYER_TORPEDO_SPEED,
-      y: options.interceptorBody.velocity.y + launchDirection.y * PLAYER_TORPEDO_SPEED,
+      x: options.interceptorBody.velocity.x +
+        launchDirection.x * PLAYER_TORPEDO_LAUNCH_SPEED,
+      y: options.interceptorBody.velocity.y +
+        launchDirection.y * PLAYER_TORPEDO_LAUNCH_SPEED,
     },
     propulsion: {
       heading: launchHeading,
@@ -4046,19 +4163,30 @@ function firePlayerTorpedo(options: {
     .fill(0x9cd3ff)
     .stroke({ color: 0xe8f7ff, width: 2, alpha: 0.95 });
   options.world.addChild(sprite);
+  const missileInitialSpeed = Math.max(
+    1,
+    Math.hypot(
+      missileBody.velocity.x,
+      missileBody.velocity.y,
+    ),
+  );
+  const estimatedTravelSeconds = Math.max(
+    0.1,
+    distanceBetween(launchPosition, targetPosition) / missileInitialSpeed,
+  );
   options.missileVisuals.push({
     id: missileId,
     body: missileBody,
     sprite,
     sourceId: options.interceptorBody.id,
     sourceType: "player",
-    targetId: targetContact.visual.config.id,
+    targetId: targetContact?.visual.config.id,
     turnRate: PLAYER_TORPEDO_TURN_RATE,
     lifetimeSeconds: 18,
     interceptSolution: {
       interceptPoint: {
-        x: targetContact.visual.body.position.x,
-        y: targetContact.visual.body.position.y,
+        x: targetPosition.x,
+        y: targetPosition.y,
       },
       timeToInterceptSeconds: estimatedTravelSeconds,
       sampleTimeSeconds: options.elapsedSeconds + estimatedTravelSeconds,
@@ -4089,6 +4217,19 @@ function getPlayerWeaponAccentColor(mode: PlayerWeaponMode): number {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
+}
+
+function convertScreenPointToWorldPoint(
+  screenPoint: Vector2Like,
+  screenCenter: Vector2Like,
+  cameraCenter: Vector2Like,
+  cameraZoom: number,
+): Vector2Like {
+  const safeZoom = Math.max(0.0001, cameraZoom);
+  return {
+    x: cameraCenter.x + (screenPoint.x - screenCenter.x) / safeZoom,
+    y: cameraCenter.y + (screenPoint.y - screenCenter.y) / safeZoom,
+  };
 }
 
 function restartScenario(options: {

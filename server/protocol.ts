@@ -10,6 +10,7 @@ export {
   sanitizeRoomCode,
   type ClientMessage,
   type PlayerInputCommand,
+  type PlayerWeaponMode,
   type PublicRoomSnapshot,
   type RoomMapSnapshot,
   type RoomPlayerSnapshot,

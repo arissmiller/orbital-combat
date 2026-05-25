@@ -1,8 +1,13 @@
-import type { SimCelestialBodySnapshot, SimPlayerWarning, PlayerInputCommand } from "./protocol.js";
+import type {
+  PlayerInputCommand,
+  SimCelestialBodySnapshot,
+  SimPlayerWarning,
+} from "./protocol.js";
 import type { MultiplayerSimPlayerState } from "../shared/multiplayer-simulation-core.js";
 
-// Disintegrator-range constants (km, matching single-player beam maps)
-const ENEMY_TARGETING_RANGE = 440;
+const ENEMY_TARGETING_BASE_RANGE = 280;
+const ENEMY_TARGETING_BOOST_RANGE_MULTIPLIER = 1.75;
+const ENEMY_TARGETING_DISRUPTOR_RANGE_MULTIPLIER = 1.2;
 const ENEMY_TARGETING_CONE_HALF_ANGLE = Math.PI / 6; // 30 degrees half-angle
 
 // Trajectory forecast for nav warning — 60 steps × 0.25 s = 15-second horizon
@@ -13,7 +18,7 @@ const GRAVITY_SOFTENING_SQ = 15 * 15;
 
 export function computePlayerWarningChannels(
   players: ReadonlyMap<string, MultiplayerSimPlayerState>,
-  inputByPlayerId: ReadonlyMap<string, PlayerInputCommand | null>,
+  _inputByPlayerId: ReadonlyMap<string, PlayerInputCommand | null>,
   celestialBodies: readonly SimCelestialBodySnapshot[],
 ): Map<string, SimPlayerWarning[]> {
   const channels = new Map<string, SimPlayerWarning[]>();
@@ -23,7 +28,7 @@ export function computePlayerWarningChannels(
     }
   }
 
-  addEnemyTargetingWarnings(players, inputByPlayerId, channels);
+  addEnemyTargetingWarnings(players, channels);
   addNavSolutionWarnings(players, celestialBodies, channels);
 
   return channels;
@@ -31,17 +36,14 @@ export function computePlayerWarningChannels(
 
 function addEnemyTargetingWarnings(
   players: ReadonlyMap<string, MultiplayerSimPlayerState>,
-  inputByPlayerId: ReadonlyMap<string, PlayerInputCommand | null>,
   channels: Map<string, SimPlayerWarning[]>,
 ): void {
   for (const attacker of players.values()) {
-    if (attacker.life?.alive === false) {
+    if (attacker.life?.alive === false || attacker.weaponFiring !== true) {
       continue;
     }
-    const input = inputByPlayerId.get(attacker.playerId);
-    if (!input?.firePrimary) {
-      continue;
-    }
+
+    const targetingRange = resolveEnemyTargetingRange(attacker);
 
     for (const target of players.values()) {
       if (target.playerId === attacker.playerId || target.life?.alive === false) {
@@ -51,7 +53,7 @@ function addEnemyTargetingWarnings(
       const dx = target.x - attacker.x;
       const dy = target.y - attacker.y;
       const distance = Math.hypot(dx, dy);
-      if (distance > ENEMY_TARGETING_RANGE || distance < 0.001) {
+      if (distance > targetingRange || distance < 0.001) {
         continue;
       }
 
@@ -70,7 +72,7 @@ function addEnemyTargetingWarnings(
       }
 
       // Only add once per target (multiple attackers → one consolidated warning)
-      if (targetWarnings.some((w) => w.id === "enemy-targeting")) {
+      if (targetWarnings.some((w) => w.id === "enemy-lock")) {
         continue;
       }
 
@@ -83,6 +85,18 @@ function addEnemyTargetingWarnings(
       });
     }
   }
+}
+
+function resolveEnemyTargetingRange(
+  player: MultiplayerSimPlayerState,
+): number {
+  const boostedRangeMultiplier = player.systems?.boosted === "weapons"
+    ? ENEMY_TARGETING_BOOST_RANGE_MULTIPLIER
+    : 1;
+  const disintegratorRange = ENEMY_TARGETING_BASE_RANGE * boostedRangeMultiplier;
+  return player.weaponMode === "disruptor"
+    ? disintegratorRange * ENEMY_TARGETING_DISRUPTOR_RANGE_MULTIPLIER
+    : disintegratorRange;
 }
 
 function addNavSolutionWarnings(

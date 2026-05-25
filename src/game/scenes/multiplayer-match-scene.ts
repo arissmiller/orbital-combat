@@ -11,6 +11,7 @@ import {
   getOrCreateMultiplayerClient,
 } from "../network/multiplayer-session";
 import type {
+  PlayerWeaponMode,
   RoomSnapshot,
   SimulationSnapshot,
   ShipSubsystemKey,
@@ -47,6 +48,7 @@ import {
   drawEngineCompass,
   drawLikelyEnemyMarkers,
   drawScannerRadius,
+  drawShieldBubble,
 } from "../rendering/prototype-overlays";
 import {
   WORLD_OVERLAY_STYLES,
@@ -84,6 +86,12 @@ const FORECAST_STEP_SECONDS = 1 / 20;
 const FORECAST_GRAVITY_EPSILON = 0.000001;
 const FORECAST_COLLISION_STOP_SPEED = 0.01;
 const BASE_DISINTEGRATOR_RANGE = 280;
+const DISRUPTOR_RANGE_MULTIPLIER = 1.2;
+const PLAYER_SHIELD_BUBBLE_RADIUS = 38;
+const BOOSTED_SHIELD_CAPACITY_MULTIPLIER = 1.5;
+const SHIELD_RENDER_CHARGE_SMOOTHING = 10;
+const SHIELD_RENDER_FLASH_DECAY_PER_SECOND = 2.8;
+const SHIELD_RENDER_FLASH_GAIN_PER_CAPACITY_LOSS = 3.2;
 
 const EMPTY_MULTIPLAYER_MISSION_SNAPSHOT: MissionRuntimeSnapshot = {
   title: "",
@@ -116,6 +124,7 @@ export function mountMultiplayerMatchScene(context: SceneContext): SceneHandle {
   const orbitLayer = new Graphics();
   const bodyLayer = new Container();
   const playerLayer = new Container();
+  const shieldBubbleOverlay = new Graphics();
   const scannerRadiusOverlay = new Graphics();
   const likelyEnemyOverlay = new Graphics();
   const scannerContactsOverlay = new Graphics();
@@ -127,8 +136,9 @@ export function mountMultiplayerMatchScene(context: SceneContext): SceneHandle {
   root.addChild(engineCompassOverlay);
   world.addChild(orbitLayer);
   world.addChild(bodyLayer);
-  world.addChild(scannerRadiusOverlay);
   world.addChild(playerLayer);
+  world.addChild(shieldBubbleOverlay);
+  world.addChild(scannerRadiusOverlay);
   world.addChild(likelyEnemyOverlay);
   world.addChild(scannerContactsOverlay);
   world.addChild(forecastOverlay);
@@ -168,6 +178,13 @@ export function mountMultiplayerMatchScene(context: SceneContext): SceneHandle {
   let localRespawnTimerSeconds = 0;
   let localHealth = 100;
   let localMaxHealth = 100;
+  let localWeaponArmed = false;
+  let localWeaponMode: PlayerWeaponMode = "disintegrator";
+  let localWeaponFiring = false;
+  let localShieldRenderFraction = 0;
+  let localShieldRenderTargetFraction = 0;
+  let localShieldRenderFlash = 0;
+  let localShieldRenderInitialized = false;
   let smoothedThrustHeading: number | null = null;
   let smoothedThrottle = 0;
   let overlayElapsedSeconds = 0;
@@ -268,6 +285,12 @@ export function mountMultiplayerMatchScene(context: SceneContext): SceneHandle {
       focusSubsystem(localShipSystems, sceneActions.focusSubsystem);
       pendingFocusSubsystem = sceneActions.focusSubsystem;
     }
+    if (sceneActions.toggleWeaponArm && localPlayerAlive) {
+      localWeaponArmed = !localWeaponArmed;
+    }
+    if (sceneActions.switchWeaponMode && localPlayerAlive) {
+      localWeaponMode = localWeaponMode === "disintegrator" ? "disruptor" : "disintegrator";
+    }
 
     maybeSendInput(nowMs, flightInput);
 
@@ -278,15 +301,18 @@ export function mountMultiplayerMatchScene(context: SceneContext): SceneHandle {
       interpolationDelayMs: SNAPSHOT_INTERPOLATION_DELAY_MS,
       extrapolationLimitMs: SNAPSHOT_EXTRAPOLATION_LIMIT_MS,
     });
+    const deltaSeconds = ticker.deltaMS / 1000;
     fpsSmoothed = fpsSmoothed * 0.9 + (1000 / Math.max(1, ticker.deltaMS)) * 0.1;
-    overlayElapsedSeconds += ticker.deltaMS / 1000;
+    overlayElapsedSeconds += deltaSeconds;
     if (frame) {
       applyAuthoritativeHudTelemetry(frame);
     }
+    stepShieldRenderState(deltaSeconds);
     updateOverlay(frame, nowMs, overlayElapsedSeconds);
 
     if (!frame) {
       clearNavigationHud();
+      clearShieldHud();
       clearScannerHud();
       return;
     }
@@ -303,6 +329,7 @@ export function mountMultiplayerMatchScene(context: SceneContext): SceneHandle {
       viewportWidth: context.app.renderer.width,
       viewportHeight: context.app.renderer.height,
     });
+    drawShieldHud(frame);
     drawScannerHud(frame);
     drawNavigationHud(frame, flightInput, ticker.deltaTime);
   };
@@ -338,6 +365,8 @@ export function mountMultiplayerMatchScene(context: SceneContext): SceneHandle {
       firePrimary: keyTracker.isPressed("KeyX"),
       fireSecondary: false,
       focusSubsystem: pendingFocusSubsystem ?? undefined,
+      weaponArmed: localWeaponArmed,
+      weaponMode: localWeaponMode,
     });
     pendingFocusSubsystem = null;
   };
@@ -354,6 +383,13 @@ export function mountMultiplayerMatchScene(context: SceneContext): SceneHandle {
       localThrustHeadingRadians = null;
       localPlayerAlive = true;
       localRespawnTimerSeconds = 0;
+      localWeaponArmed = false;
+      localWeaponMode = "disintegrator";
+      localWeaponFiring = false;
+      localShieldRenderFraction = 0;
+      localShieldRenderTargetFraction = 0;
+      localShieldRenderFlash = 0;
+      localShieldRenderInitialized = false;
       return;
     }
 
@@ -361,19 +397,88 @@ export function mountMultiplayerMatchScene(context: SceneContext): SceneHandle {
     localRespawnTimerSeconds = selfPlayer.life?.respawnTimerSeconds ?? 0;
     localHealth = selfPlayer.life?.health ?? localMaxHealth;
     localMaxHealth = selfPlayer.life?.maxHealth ?? 100;
+    localWeaponArmed = selfPlayer.weaponArmed ?? false;
+    localWeaponMode = selfPlayer.weaponMode ?? "disintegrator";
+    localWeaponFiring = localPlayerAlive ? (selfPlayer.weaponFiring ?? false) : false;
     localEngineThrottle = localPlayerAlive ? (selfPlayer.throttle ?? 0) : 0;
     localThrustHeadingRadians = localPlayerAlive
       ? (selfPlayer.thrustHeading ?? null)
       : null;
+    if (!localPlayerAlive) {
+      localShieldRenderFraction = 0;
+      localShieldRenderTargetFraction = 0;
+      localShieldRenderFlash = 0;
+      localShieldRenderInitialized = false;
+    }
 
     if (selfPlayer.systems) {
       syncHudShipSystems(localShipSystems, selfPlayer.systems);
+      const nextShieldRenderTargetFraction = getShieldCapacityFraction(selfPlayer.systems);
+      if (!localShieldRenderInitialized) {
+        localShieldRenderFraction = nextShieldRenderTargetFraction;
+        localShieldRenderTargetFraction = nextShieldRenderTargetFraction;
+        localShieldRenderInitialized = true;
+      } else {
+        const shieldLoss = Math.max(
+          0,
+          localShieldRenderTargetFraction - nextShieldRenderTargetFraction,
+        );
+        if (shieldLoss > 0.0001) {
+          localShieldRenderFlash = Math.min(
+            1,
+            localShieldRenderFlash + shieldLoss * SHIELD_RENDER_FLASH_GAIN_PER_CAPACITY_LOSS,
+          );
+        }
+        localShieldRenderTargetFraction = nextShieldRenderTargetFraction;
+      }
     }
+  };
+
+  const stepShieldRenderState = (deltaSeconds: number): void => {
+    localShieldRenderFlash = Math.max(
+      0,
+      localShieldRenderFlash - deltaSeconds * SHIELD_RENDER_FLASH_DECAY_PER_SECOND,
+    );
+    const blend = 1 - Math.exp(-SHIELD_RENDER_CHARGE_SMOOTHING * deltaSeconds);
+    localShieldRenderFraction = lerp(
+      localShieldRenderFraction,
+      localShieldRenderTargetFraction,
+      blend,
+    );
   };
 
   const clearNavigationHud = (): void => {
     forecastOverlay.clear();
     engineCompassOverlay.clear();
+  };
+
+  const clearShieldHud = (): void => {
+    shieldBubbleOverlay.clear();
+  };
+
+  const drawShieldHud = (frame: ResolvedSimulationFrame): void => {
+    if (!hudVisible || !selfPlayerId) {
+      clearShieldHud();
+      return;
+    }
+
+    const selfPlayer = frame.players.find((player) => player.playerId === selfPlayerId);
+    if (!selfPlayer || selfPlayer.life?.alive === false) {
+      clearShieldHud();
+      return;
+    }
+
+    const spriteInfo = worldPresenter.getPlayerSpriteInfo(selfPlayerId);
+    const shieldCenter = spriteInfo
+      ? { x: spriteInfo.worldX, y: spriteInfo.worldY }
+      : { x: selfPlayer.renderX, y: selfPlayer.renderY };
+    drawShieldBubble(
+      shieldBubbleOverlay,
+      shieldCenter,
+      PLAYER_SHIELD_BUBBLE_RADIUS,
+      localShieldRenderFraction,
+      localShieldRenderFlash,
+    );
   };
 
   const clearScannerHud = (): void => {
@@ -421,6 +526,9 @@ export function mountMultiplayerMatchScene(context: SceneContext): SceneHandle {
 
     const disintegratorRange =
       BASE_DISINTEGRATOR_RANGE * getWeaponRangeMultiplier(localShipSystems);
+    const weaponRange = localWeaponMode === "disintegrator"
+      ? disintegratorRange
+      : disintegratorRange * DISRUPTOR_RANGE_MULTIPLIER;
     const scannerOccluders = frame.celestialBodies.map((body) => ({
       config: { id: body.id },
       body: {
@@ -433,7 +541,7 @@ export function mountMultiplayerMatchScene(context: SceneContext): SceneHandle {
       scannerRadiusOverlay,
       { x: selfPlayer.renderX, y: selfPlayer.renderY },
       selfPlayer.scanner.range,
-      disintegratorRange,
+      weaponRange,
       scannerOccluders as unknown as Parameters<typeof drawScannerRadius>[4],
     );
 
@@ -701,10 +809,13 @@ export function mountMultiplayerMatchScene(context: SceneContext): SceneHandle {
         scoreboardTargetsDestroyed: 0,
         engineThrottle: localEngineThrottle,
         engineThrustHeadingRadians: localThrustHeadingRadians,
-        disintegratorFiring: localPlayerAlive && keyTracker.isPressed("KeyX"),
+        disintegratorFiring:
+          localPlayerAlive &&
+          localWeaponMode === "disintegrator" &&
+          localWeaponFiring,
         shipSystems: localShipSystems,
-        weaponArmed: true,
-        weaponMode: "disintegrator",
+        weaponArmed: localWeaponArmed,
+        weaponMode: localWeaponMode,
         trainingMissionEnabled: false,
         missionActive: false,
         mission: EMPTY_MULTIPLAYER_MISSION_SNAPSHOT,
@@ -784,6 +895,21 @@ function syncHudSubsystem(
   target.baseMaxCharge = maxCharge;
   target.maxCharge = maxCharge;
   target.charge = clamp(source.charge, 0, maxCharge);
+}
+
+function getShieldCapacityFraction(
+  systems: SimPlayerSystemsSnapshot,
+): number {
+  const shieldFraction = systems.defenses.maxCharge > 0
+    ? systems.defenses.charge / systems.defenses.maxCharge
+    : 0;
+  const activeShieldCapacityMultiplier =
+    systems.boosted === "defenses" ? BOOSTED_SHIELD_CAPACITY_MULTIPLIER : 1;
+  return clamp(
+    shieldFraction * (activeShieldCapacityMultiplier / BOOSTED_SHIELD_CAPACITY_MULTIPLIER),
+    0,
+    1,
+  );
 }
 
 
@@ -953,6 +1079,10 @@ function toPredictedPlayerState(
     throttle: player.throttle,
     thrustHeading: player.thrustHeading,
     superBurnActive: player.superBurnActive,
+    weaponArmed: player.weaponArmed,
+    weaponMode: player.weaponMode,
+    weaponFiring: player.weaponFiring,
+    weaponDisabledUntilSeconds: 0,
   };
 }
 

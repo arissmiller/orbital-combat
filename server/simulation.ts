@@ -1,4 +1,5 @@
 import type {
+  PlayerWeaponMode,
   PlayerInputCommand,
   SimCelestialBodySnapshot,
   SimulationSnapshot,
@@ -42,6 +43,24 @@ const PLAYER_SCANNER_LOCK_BASE_RATE = 1.2;
 const PLAYER_SCANNER_LOCK_CHARGE_FACTOR = 1.7;
 const PLAYER_SCANNER_BOOST_LOCK_MULTIPLIER = 6;
 const PLAYER_SCANNER_INSTANT_LOCK_WHEN_BOOSTED = true;
+const PLAYER_BASE_DISINTEGRATOR_RANGE = 280;
+const PLAYER_WEAPON_BOOST_RANGE_MULTIPLIER = 1.75;
+const PLAYER_WEAPON_BOOST_DAMAGE_MULTIPLIER = 1.5;
+const PLAYER_WEAPON_BOOST_ENERGY_COST_MULTIPLIER = 1.5;
+const DISRUPTOR_RANGE_MULTIPLIER = 1.2;
+const DISINTEGRATOR_DISCHARGE_PER_SECOND = 0.72;
+const DISRUPTOR_DISCHARGE_PER_SECOND = 0.56;
+const DISINTEGRATOR_TARGET_ACQUIRE_THRESHOLD = 1;
+const DISRUPTOR_TARGET_ACQUIRE_THRESHOLD = 0.55;
+const DISINTEGRATOR_ENGAGE_START_THRESHOLD = 0.02;
+const DISRUPTOR_ENGAGE_START_THRESHOLD = 0.02;
+const DISINTEGRATOR_ENGAGE_RAMP_UP_PER_SECOND = 1.75;
+const DISRUPTOR_ENGAGE_RAMP_UP_PER_SECOND = 1.55;
+const DISINTEGRATOR_ENGAGE_DECAY_PER_SECOND = 3.2;
+const DISRUPTOR_ENGAGE_DECAY_PER_SECOND = 3.1;
+const DISRUPTOR_SHIELD_DAMAGE_MULTIPLIER = 1.15;
+const DISRUPTOR_DISABLE_SECONDS = 4.8;
+const PLAYER_DISINTEGRATOR_DURABILITY = 0.42;
 
 export interface RoomSimulationState {
   roomCode: string;
@@ -52,6 +71,7 @@ export interface RoomSimulationState {
   celestialBodies: SimCelestialBodySnapshot[];
   players: Map<string, MultiplayerSimPlayerState>;
   playerScannerLocks: Map<string, Map<string, number>>;
+  playerWeaponEngagements: Map<string, Map<string, number>>;
 }
 
 export function createRoomSimulation(
@@ -89,6 +109,7 @@ export function createRoomSimulation(
     celestialBodies: initialCelestialBodies,
     players,
     playerScannerLocks: createPlayerScannerLockState(players.keys()),
+    playerWeaponEngagements: createPlayerWeaponEngagementState(players.keys()),
   };
 }
 
@@ -98,8 +119,12 @@ export function removePlayerFromSimulation(
 ): void {
   simulation.players.delete(playerId);
   simulation.playerScannerLocks.delete(playerId);
+  simulation.playerWeaponEngagements.delete(playerId);
   for (const locksByTarget of simulation.playerScannerLocks.values()) {
     locksByTarget.delete(playerId);
+  }
+  for (const engagementsByTarget of simulation.playerWeaponEngagements.values()) {
+    engagementsByTarget.delete(playerId);
   }
 }
 
@@ -158,11 +183,18 @@ export function addPlayerToSimulation(
 
   simulation.players.set(playerId, spawnedPlayer);
   simulation.playerScannerLocks.set(playerId, new Map());
+  simulation.playerWeaponEngagements.set(playerId, new Map());
   for (const [observerId, locksByTarget] of simulation.playerScannerLocks.entries()) {
     if (observerId === playerId) {
       continue;
     }
     locksByTarget.delete(playerId);
+  }
+  for (const [observerId, engagementsByTarget] of simulation.playerWeaponEngagements.entries()) {
+    if (observerId === playerId) {
+      continue;
+    }
+    engagementsByTarget.delete(playerId);
   }
   return true;
 }
@@ -187,6 +219,7 @@ export function stepRoomSimulation(
   );
   updatePlayerLifeStates(simulation);
   updatePlayerScannerLocks(simulation, stepSeconds);
+  applyPlayerWeaponSystems(simulation, stepSeconds);
 }
 
 export function buildSimulationSnapshot(
@@ -432,7 +465,280 @@ function hasInstantPlayerScannerLocks(player: MultiplayerSimPlayerState): boolea
   );
 }
 
+function applyPlayerWeaponSystems(
+  simulation: RoomSimulationState,
+  deltaSeconds: number,
+): void {
+  const playersList = [...simulation.players.values()];
+  const alivePlayerIds = new Set(
+    playersList
+      .filter((player) => player.life?.alive !== false)
+      .map((player) => player.playerId),
+  );
+
+  for (const attacker of playersList) {
+    attacker.weaponFiring = false;
+    const engagementsByTarget =
+      simulation.playerWeaponEngagements.get(attacker.playerId) ?? new Map<string, number>();
+    if (!simulation.playerWeaponEngagements.has(attacker.playerId)) {
+      simulation.playerWeaponEngagements.set(attacker.playerId, engagementsByTarget);
+    }
+
+    for (const targetId of [...engagementsByTarget.keys()]) {
+      if (targetId === attacker.playerId || !alivePlayerIds.has(targetId)) {
+        engagementsByTarget.delete(targetId);
+      }
+    }
+
+    if (attacker.life?.alive === false || !attacker.systems) {
+      engagementsByTarget.clear();
+      continue;
+    }
+
+    const weaponMode = resolvePlayerWeaponMode(attacker);
+    const weaponRange = resolvePlayerWeaponRange(attacker, weaponMode);
+    const requiredLockProgress = weaponMode === "disintegrator"
+      ? DISINTEGRATOR_TARGET_ACQUIRE_THRESHOLD
+      : DISRUPTOR_TARGET_ACQUIRE_THRESHOLD;
+    const engageStartThreshold = weaponMode === "disintegrator"
+      ? DISINTEGRATOR_ENGAGE_START_THRESHOLD
+      : DISRUPTOR_ENGAGE_START_THRESHOLD;
+    const engageRampUpPerSecond = weaponMode === "disintegrator"
+      ? DISINTEGRATOR_ENGAGE_RAMP_UP_PER_SECOND
+      : DISRUPTOR_ENGAGE_RAMP_UP_PER_SECOND;
+    const engageDecayPerSecond = weaponMode === "disintegrator"
+      ? DISINTEGRATOR_ENGAGE_DECAY_PER_SECOND
+      : DISRUPTOR_ENGAGE_DECAY_PER_SECOND;
+    const scannerRange = resolvePlayerScannerRange(attacker);
+    const lockStatesByTarget = simulation.playerScannerLocks.get(attacker.playerId);
+    const visibleTargets: Array<{
+      target: MultiplayerSimPlayerState;
+    }> = [];
+
+    for (const target of playersList) {
+      if (target.playerId === attacker.playerId || target.life?.alive === false) {
+        continue;
+      }
+
+      const distance = Math.hypot(target.x - attacker.x, target.y - attacker.y);
+      if (distance > weaponRange || distance > scannerRange) {
+        continue;
+      }
+
+      const occludedByCelestialId = findOccludingCelestialBodyId(
+        { x: attacker.x, y: attacker.y },
+        { x: target.x, y: target.y },
+        simulation.celestialBodies,
+      );
+      if (occludedByCelestialId !== null) {
+        continue;
+      }
+
+      const lockProgress = Math.max(
+        0,
+        Math.min(1, lockStatesByTarget?.get(target.playerId) ?? 0),
+      );
+      if (lockProgress < requiredLockProgress) {
+        continue;
+      }
+
+      visibleTargets.push({
+        target,
+      });
+    }
+
+    const weaponArmed =
+      (attacker.weaponArmed ?? false) &&
+      !hasPlayerWeaponsDisabled(attacker, simulation.elapsedSeconds);
+    const activeTargetIds = weaponArmed
+      ? new Set(visibleTargets.map((entry) => entry.target.playerId))
+      : new Set<string>();
+
+    for (const [targetId, progress] of engagementsByTarget.entries()) {
+      if (activeTargetIds.has(targetId)) {
+        continue;
+      }
+
+      const nextProgress = Math.max(
+        0,
+        progress - deltaSeconds * engageDecayPerSecond,
+      );
+      if (nextProgress > 0) {
+        engagementsByTarget.set(targetId, nextProgress);
+      } else {
+        engagementsByTarget.delete(targetId);
+      }
+    }
+
+    if (weaponArmed) {
+      for (const entry of visibleTargets) {
+        const currentProgress = engagementsByTarget.get(entry.target.playerId) ?? 0;
+        engagementsByTarget.set(
+          entry.target.playerId,
+          Math.min(1, currentProgress + deltaSeconds * engageRampUpPerSecond),
+        );
+      }
+    }
+
+    if (!weaponArmed || visibleTargets.length === 0 || attacker.systems.weapons.charge <= 0) {
+      continue;
+    }
+
+    const weightedTargets = visibleTargets
+      .map((entry) => ({
+        target: entry.target,
+        progress: engagementsByTarget.get(entry.target.playerId) ?? 0,
+      }))
+      .filter((entry) => entry.progress > engageStartThreshold);
+    const totalProgress = weightedTargets.reduce((sum, entry) => sum + entry.progress, 0);
+    if (weightedTargets.length === 0 || totalProgress <= 0) {
+      continue;
+    }
+
+    const energyCostMultiplier = getPlayerWeaponEnergyCostMultiplier(attacker);
+    const dischargePerSecond = weaponMode === "disintegrator"
+      ? DISINTEGRATOR_DISCHARGE_PER_SECOND
+      : DISRUPTOR_DISCHARGE_PER_SECOND;
+    const maxDischarge = Math.min(
+      attacker.systems.weapons.charge / energyCostMultiplier,
+      deltaSeconds *
+        dischargePerSecond *
+        Math.min(1, totalProgress / weightedTargets.length),
+    );
+    if (maxDischarge <= 0) {
+      continue;
+    }
+
+    attacker.systems.weapons.charge = Math.max(
+      0,
+      attacker.systems.weapons.charge - maxDischarge * energyCostMultiplier,
+    );
+    attacker.weaponFiring = true;
+
+    const damageMultiplier = getPlayerWeaponDamageMultiplier(attacker);
+    for (const entry of weightedTargets) {
+      if (entry.target.life?.alive === false) {
+        continue;
+      }
+
+      const appliedEnergy =
+        ((maxDischarge * entry.progress) / totalProgress) * damageMultiplier;
+      if (weaponMode === "disintegrator") {
+        applyDisintegratorDamage(entry.target, appliedEnergy);
+      } else {
+        applyDisruptorEffect(simulation, entry.target, appliedEnergy);
+      }
+    }
+  }
+}
+
+function applyDisintegratorDamage(
+  target: MultiplayerSimPlayerState,
+  appliedEnergy: number,
+): void {
+  if (appliedEnergy <= 0) {
+    return;
+  }
+
+  const life = getOrCreatePlayerLife(target);
+  if (!life.alive || life.respawnGraceSeconds > 0) {
+    return;
+  }
+
+  const damage = (appliedEnergy / PLAYER_DISINTEGRATOR_DURABILITY) * life.maxHealth;
+  life.health = Math.max(0, life.health - damage);
+  if (life.health <= 0) {
+    destroyPlayerForRespawn(target);
+  }
+}
+
+function applyDisruptorEffect(
+  simulation: RoomSimulationState,
+  target: MultiplayerSimPlayerState,
+  appliedEnergy: number,
+): void {
+  if (appliedEnergy <= 0) {
+    return;
+  }
+
+  const life = getOrCreatePlayerLife(target);
+  if (!life.alive || life.respawnGraceSeconds > 0) {
+    return;
+  }
+
+  const defenses = target.systems?.defenses;
+  if (defenses && defenses.charge > 0) {
+    const shieldDamage = appliedEnergy * DISRUPTOR_SHIELD_DAMAGE_MULTIPLIER;
+    const absorbedShieldDamage = Math.min(defenses.charge, shieldDamage);
+    defenses.charge = Math.max(0, defenses.charge - absorbedShieldDamage);
+    if (defenses.charge > 0) {
+      return;
+    }
+  }
+
+  target.weaponArmed = false;
+  target.weaponFiring = false;
+  target.weaponDisabledUntilSeconds = Math.max(
+    target.weaponDisabledUntilSeconds ?? 0,
+    simulation.elapsedSeconds + DISRUPTOR_DISABLE_SECONDS,
+  );
+}
+
+function resolvePlayerWeaponMode(
+  player: MultiplayerSimPlayerState,
+): PlayerWeaponMode {
+  return player.weaponMode === "disruptor" ? "disruptor" : "disintegrator";
+}
+
+function hasPlayerWeaponsDisabled(
+  player: MultiplayerSimPlayerState,
+  elapsedSeconds: number,
+): boolean {
+  return (player.weaponDisabledUntilSeconds ?? 0) > elapsedSeconds;
+}
+
+function resolvePlayerDisintegratorRange(
+  player: MultiplayerSimPlayerState,
+): number {
+  const boostedMultiplier = player.systems?.boosted === "weapons"
+    ? PLAYER_WEAPON_BOOST_RANGE_MULTIPLIER
+    : 1;
+  return PLAYER_BASE_DISINTEGRATOR_RANGE * boostedMultiplier;
+}
+
+function resolvePlayerWeaponRange(
+  player: MultiplayerSimPlayerState,
+  weaponMode: PlayerWeaponMode,
+): number {
+  const disintegratorRange = resolvePlayerDisintegratorRange(player);
+  return weaponMode === "disintegrator"
+    ? disintegratorRange
+    : disintegratorRange * DISRUPTOR_RANGE_MULTIPLIER;
+}
+
+function getPlayerWeaponDamageMultiplier(player: MultiplayerSimPlayerState): number {
+  return player.systems?.boosted === "weapons"
+    ? PLAYER_WEAPON_BOOST_DAMAGE_MULTIPLIER
+    : 1;
+}
+
+function getPlayerWeaponEnergyCostMultiplier(player: MultiplayerSimPlayerState): number {
+  return player.systems?.boosted === "weapons"
+    ? PLAYER_WEAPON_BOOST_ENERGY_COST_MULTIPLIER
+    : 1;
+}
+
 function createPlayerScannerLockState(
+  playerIds: Iterable<string>,
+): Map<string, Map<string, number>> {
+  const state = new Map<string, Map<string, number>>();
+  for (const playerId of playerIds) {
+    state.set(playerId, new Map());
+  }
+  return state;
+}
+
+function createPlayerWeaponEngagementState(
   playerIds: Iterable<string>,
 ): Map<string, Map<string, number>> {
   const state = new Map<string, Map<string, number>>();
@@ -606,6 +912,9 @@ function destroyPlayerForRespawn(player: MultiplayerSimPlayerState): void {
   player.thrustHeading = null;
   player.superBurnActive = false;
   player.lastCollisionImpactSpeed = 0;
+  player.weaponArmed = false;
+  player.weaponFiring = false;
+  player.weaponDisabledUntilSeconds = 0;
 }
 
 function respawnPlayer(
@@ -651,6 +960,10 @@ function respawnPlayer(
   player.thrustHeading = null;
   player.superBurnActive = false;
   player.lastCollisionImpactSpeed = 0;
+  player.weaponArmed = false;
+  player.weaponMode = "disintegrator";
+  player.weaponFiring = false;
+  player.weaponDisabledUntilSeconds = 0;
   refillPlayerSystems(player);
   armPlayerForLife(player, PLAYER_RESPAWN_GRACE_SECONDS);
 }
@@ -664,6 +977,7 @@ function armPlayerForLife(
   life.respawnTimerSeconds = 0;
   life.respawnGraceSeconds = Math.max(0, respawnGraceSeconds);
   life.health = life.maxHealth;
+  player.weaponDisabledUntilSeconds = 0;
 }
 
 function refillPlayerSystems(player: MultiplayerSimPlayerState): void {

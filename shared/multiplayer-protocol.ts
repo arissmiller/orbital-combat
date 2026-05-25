@@ -8,6 +8,7 @@ const MAX_NAME_LENGTH = 24;
 export const DEFAULT_MAX_PLAYERS = 4;
 export const ROOM_CODE_LENGTH = 6;
 export type ShipSubsystemKey = "engines" | "scanners" | "weapons" | "defenses";
+export type PlayerWeaponMode = "disintegrator" | "disruptor";
 
 export type ClientMessage =
   | {
@@ -46,6 +47,8 @@ export type ClientMessage =
       firePrimary: boolean;
       fireSecondary: boolean;
       focusSubsystem?: ShipSubsystemKey;
+      weaponArmed?: boolean;
+      weaponMode?: PlayerWeaponMode;
     }
   | {
       type: "ping";
@@ -106,6 +109,9 @@ export interface SimPlayerSnapshot {
   life?: SimPlayerLifeSnapshot;
   scanner?: SimPlayerScannerSnapshot;
   warnings?: SimPlayerWarning[];
+  weaponArmed?: boolean;
+  weaponMode?: PlayerWeaponMode;
+  weaponFiring?: boolean;
 }
 
 export interface SimPlayerSubsystemSnapshot {
@@ -207,6 +213,8 @@ export interface PlayerInputCommand {
   firePrimary: boolean;
   fireSecondary: boolean;
   focusSubsystem?: ShipSubsystemKey;
+  weaponArmed?: boolean;
+  weaponMode?: PlayerWeaponMode;
 }
 
 export function parseClientMessage(raw: unknown): ClientMessage | null {
@@ -274,6 +282,14 @@ export function parseClientMessage(raw: unknown): ClientMessage | null {
       if (message.focusSubsystem !== undefined && focusSubsystem === null) {
         return null;
       }
+      const weaponMode = parsePlayerWeaponMode(message.weaponMode);
+      if (message.weaponMode !== undefined && weaponMode === null) {
+        return null;
+      }
+      const weaponArmed = parseOptionalBoolean(message.weaponArmed);
+      if (message.weaponArmed !== undefined && weaponArmed === undefined) {
+        return null;
+      }
 
       return {
         type: "input",
@@ -288,6 +304,8 @@ export function parseClientMessage(raw: unknown): ClientMessage | null {
         firePrimary: parseBoolean(message.firePrimary),
         fireSecondary: parseBoolean(message.fireSecondary),
         focusSubsystem: focusSubsystem ?? undefined,
+        weaponArmed,
+        weaponMode: weaponMode ?? undefined,
       };
     }
     case "ping": {
@@ -584,6 +602,9 @@ function parseSimulationSnapshot(raw: unknown): SimulationSnapshot | null {
       life: parseOptionalSimPlayerLifeSnapshot(playerSnapshot.life),
       scanner: parseOptionalSimPlayerScannerSnapshot(playerSnapshot.scanner),
       warnings: parseOptionalSimPlayerWarnings(playerSnapshot.warnings),
+      weaponArmed: parseOptionalBoolean(playerSnapshot.weaponArmed),
+      weaponMode: parseOptionalPlayerWeaponMode(playerSnapshot.weaponMode),
+      weaponFiring: parseOptionalBoolean(playerSnapshot.weaponFiring),
     });
   }
 
@@ -717,6 +738,15 @@ function parseOptionalBoolean(value: unknown): boolean | undefined {
     return undefined;
   }
   return typeof value === "boolean" ? value : undefined;
+}
+
+function parseOptionalPlayerWeaponMode(
+  value: unknown,
+): PlayerWeaponMode | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  return parsePlayerWeaponMode(value) ?? undefined;
 }
 
 function parseOptionalSimPlayerSystemsSnapshot(
@@ -895,6 +925,13 @@ function parseShipSubsystemKey(value: unknown): ShipSubsystemKey | null {
     return null;
   }
   if (value === "engines" || value === "scanners" || value === "weapons" || value === "defenses") {
+    return value;
+  }
+  return null;
+}
+
+function parsePlayerWeaponMode(value: unknown): PlayerWeaponMode | null {
+  if (value === "disintegrator" || value === "disruptor") {
     return value;
   }
   return null;

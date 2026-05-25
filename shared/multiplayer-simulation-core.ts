@@ -1,4 +1,5 @@
 import type {
+  PlayerWeaponMode,
   PlayerInputCommand,
   SimCelestialBodySnapshot,
   SimPlayerLifeSnapshot,
@@ -95,6 +96,10 @@ export interface MultiplayerSimPlayerState {
   thrustHeading?: number | null;
   superBurnActive?: boolean;
   lastCollisionImpactSpeed?: number;
+  weaponArmed?: boolean;
+  weaponMode?: PlayerWeaponMode;
+  weaponFiring?: boolean;
+  weaponDisabledUntilSeconds?: number;
 }
 
 export interface MultiplayerSpawnOptions {
@@ -145,6 +150,10 @@ export function createSpawnedPlayers(
       thrustHeading: null,
       superBurnActive: false,
       lastCollisionImpactSpeed: 0,
+      weaponArmed: false,
+      weaponMode: "disintegrator",
+      weaponFiring: false,
+      weaponDisabledUntilSeconds: 0,
     });
   });
 
@@ -162,6 +171,24 @@ export function stepMultiplayerPlayers(
     const inputCommand = inputByPlayerId.get(player.playerId) ?? null;
     if (inputCommand) {
       player.lastProcessedInputSequence = inputCommand.sequence;
+      if (typeof inputCommand.weaponArmed === "boolean") {
+        player.weaponArmed = inputCommand.weaponArmed;
+      }
+      if (inputCommand.weaponMode) {
+        player.weaponMode = inputCommand.weaponMode;
+      }
+    }
+    if (player.weaponArmed === undefined) {
+      player.weaponArmed = false;
+    }
+    if (player.weaponMode === undefined) {
+      player.weaponMode = "disintegrator";
+    }
+    if (player.weaponFiring === undefined) {
+      player.weaponFiring = false;
+    }
+    if (player.weaponDisabledUntilSeconds === undefined) {
+      player.weaponDisabledUntilSeconds = 0;
     }
     const life = ensurePlayerLifeState(player);
     if (life.respawnGraceSeconds > 0) {
@@ -173,6 +200,7 @@ export function stepMultiplayerPlayers(
       player.thrustHeading = null;
       player.superBurnActive = false;
       player.lastCollisionImpactSpeed = 0;
+      player.weaponFiring = false;
       continue;
     }
 
@@ -340,6 +368,9 @@ export function buildSimPlayerSnapshots(
       superBurnActive: player.superBurnActive,
       systems,
       life,
+      weaponArmed: player.weaponArmed,
+      weaponMode: player.weaponMode,
+      weaponFiring: player.weaponFiring,
     });
   }
   return snapshots;

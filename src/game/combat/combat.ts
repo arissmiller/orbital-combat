@@ -144,6 +144,9 @@ function isPassiveDefenseWeaponType(
   return weaponType === "station" || weaponType === "target";
 }
 
+const PLAYER_TORPEDO_LOCK_CORRIDOR_PADDING = 42;
+const PLAYER_TORPEDO_LOCK_MAX_FORWARD_DISTANCE = 2400;
+
 export function detonateMissile(missile: MissileVisual): void {
   missile.detonationElapsedSeconds = 0;
   missile.neutralizedElapsedSeconds = null;
@@ -239,14 +242,14 @@ export function updateLauncherMissiles(options: {
       continue;
     }
 
+    if (missile.lifetimeSeconds <= 0) {
+      detonateMissile(missile);
+      continue;
+    }
+
     const sourceType = missile.sourceType ?? "defense";
     const sourceDefense = defenseById.get(missile.sourceId);
-    const targetedDefense = missile.targetId
-      ? defenseById.get(missile.targetId)
-      : null;
-    const targetPosition = sourceType === "player" && targetedDefense
-      ? targetedDefense.body.position
-      : options.interceptorBody.position;
+    let targetPosition: Vector2Like = options.interceptorBody.position;
 
     if (sourceType === "defense") {
       const interceptSolution = sourceDefense
@@ -268,7 +271,27 @@ export function updateLauncherMissiles(options: {
       } else {
         missile.lostTrackSeconds += options.stepSeconds;
       }
-    } else if (targetedDefense && !targetedDefense.destroyed) {
+      targetPosition = options.interceptorBody.position;
+    } else {
+      const currentTarget = missile.targetId
+        ? defenseById.get(missile.targetId) ?? null
+        : null;
+      const activeTarget = currentTarget &&
+          !currentTarget.destroyed &&
+          currentTarget.config.weaponType !== "station"
+        ? currentTarget
+        : findPlayerTorpedoLockTarget(missile, options.defenseVisuals);
+      if (activeTarget) {
+        missile.targetId = activeTarget.config.id;
+        targetPosition = activeTarget.body.position;
+      } else {
+        missile.targetId = undefined;
+        targetPosition = missile.interceptSolution?.interceptPoint ?? {
+          x: missile.body.position.x + Math.cos(missile.body.propulsion.heading) * 180,
+          y: missile.body.position.y + Math.sin(missile.body.propulsion.heading) * 180,
+        };
+      }
+
       const distanceToTarget = distanceBetween(missile.body.position, targetPosition);
       const missileSpeed = Math.max(
         0.001,
@@ -284,10 +307,7 @@ export function updateLauncherMissiles(options: {
         sampleTimeSeconds: options.elapsedSeconds + timeToTarget,
         confidence: "fallback",
       };
-      missile.lostTrackSeconds = 0;
-    } else {
-      detonateMissile(missile);
-      continue;
+      missile.lostTrackSeconds = activeTarget ? 0 : missile.lostTrackSeconds + options.stepSeconds;
     }
 
     const plannedInterceptTime = missile.interceptSolution?.sampleTimeSeconds ?? null;
@@ -307,7 +327,7 @@ export function updateLauncherMissiles(options: {
       hasMissileOvershotTarget(
         missile.body.position,
         missile.body.velocity,
-        targetPosition,
+        missile.interceptSolution?.interceptPoint ?? targetPosition,
       )
     ) {
       detonateMissile(missile);
@@ -1356,6 +1376,53 @@ function tryApplyMissileSplashDamageToShip(
     otherBodyId: missile.id,
     relativeSpeed: 0,
   };
+}
+
+function findPlayerTorpedoLockTarget(
+  missile: MissileVisual,
+  defenses: readonly DefenseCombatVisual[],
+): DefenseCombatVisual | null {
+  const heading = missile.body.propulsion
+    ? missile.body.propulsion.heading
+    : Math.atan2(missile.body.velocity.y, missile.body.velocity.x);
+  const forwardX = Math.cos(heading);
+  const forwardY = Math.sin(heading);
+  let nearestTarget: DefenseCombatVisual | null = null;
+  let nearestScore = Number.POSITIVE_INFINITY;
+
+  for (const defense of defenses) {
+    if (defense.destroyed || defense.config.weaponType === "station") {
+      continue;
+    }
+
+    const toTargetX = defense.body.position.x - missile.body.position.x;
+    const toTargetY = defense.body.position.y - missile.body.position.y;
+    const forwardDistance = toTargetX * forwardX + toTargetY * forwardY;
+
+    if (
+      forwardDistance <= 0 ||
+      forwardDistance > PLAYER_TORPEDO_LOCK_MAX_FORWARD_DISTANCE
+    ) {
+      continue;
+    }
+
+    const lateralDistance = Math.abs(toTargetX * forwardY - toTargetY * forwardX);
+    const maxLateralDistance =
+      Math.max(26, defense.config.radius) + PLAYER_TORPEDO_LOCK_CORRIDOR_PADDING;
+
+    if (lateralDistance > maxLateralDistance) {
+      continue;
+    }
+
+    const distance = Math.hypot(toTargetX, toTargetY);
+    const lockScore = distance + lateralDistance * 1.6;
+    if (lockScore < nearestScore) {
+      nearestScore = lockScore;
+      nearestTarget = defense;
+    }
+  }
+
+  return nearestTarget;
 }
 
 function hasMissileOvershotTarget(

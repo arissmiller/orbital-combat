@@ -60,13 +60,22 @@ export function GameOverlay(): ReactElement | null {
             ))}
           </div>
         ) : null}
-        <div className="game-overlay__systems">
+        <div className="game-overlay__status-cluster">
           {overlayState.vitals ? (
-            <VitalsPanel vitals={overlayState.vitals} />
+            <div className="game-overlay__vitals">
+              <VitalsPanel
+                vitals={overlayState.vitals}
+                defensesBoosted={
+                  overlayState.systems.find((system) => system.key === "defenses")?.boosted ?? false
+                }
+              />
+            </div>
           ) : null}
-          {overlayState.systems.map((system) => (
-            <SystemPanel key={system.key} system={system} />
-          ))}
+          <div className="game-overlay__systems">
+            {overlayState.systems.map((system) => (
+              <SystemPanel key={system.key} system={system} />
+            ))}
+          </div>
         </div>
       </div>
     </div>
@@ -271,34 +280,66 @@ function BriefingVisual(props: {
   }
 }
 
-function VitalsPanel(props: { vitals: OverlayVitalsState }): ReactElement {
-  const { vitals } = props;
+function VitalsPanel(props: {
+  vitals: OverlayVitalsState;
+  defensesBoosted: boolean;
+}): ReactElement {
+  const { vitals, defensesBoosted } = props;
   const healthFraction = vitals.maxHealth > 0 ? vitals.health / vitals.maxHealth : 0;
   const shieldFraction = vitals.shieldMaxCharge > 0
     ? vitals.shieldCharge / vitals.shieldMaxCharge
     : 0;
+  const boostedShieldCapacityMultiplier = 1.5;
+  const activeShieldCapacityMultiplier = defensesBoosted ? boostedShieldCapacityMultiplier : 1;
+  const effectiveShieldCapacityFraction = Math.max(
+    0,
+    Math.min(
+      1,
+      shieldFraction * (activeShieldCapacityMultiplier / boostedShieldCapacityMultiplier),
+    ),
+  );
   const healthColor = healthFraction > 0.6 ? "#6ae78c" : healthFraction > 0.3 ? "#ffbd59" : "#ff7b72";
   return (
     <section
-      className="game-panel game-panel--system game-panel--vitals"
-      style={createPanelStyle(healthColor)}
+      className="game-panel game-panel--vitals"
+      style={{
+        ...createPanelStyle("#78e8ff"),
+        ["--vitals-health-color" as string]: healthColor,
+        ["--vitals-shield-color" as string]: "#78e8ff",
+      }}
     >
-      <div className="game-panel__badge">HULL / SH</div>
-      <div className="game-panel__meters">
-        <Meter
-          meter={{
-            value: healthFraction,
-            fillColor: healthColor,
-            backgroundColor: "#17202b",
-          }}
-        />
-        <Meter
-          meter={{
-            value: shieldFraction,
-            fillColor: "#78e8ff",
-            backgroundColor: "#0d1e2e",
-          }}
-        />
+      <div className="game-panel__badge">Ship Vitals</div>
+      <div className="game-vitals__groups">
+        <div className="game-vitals__group game-vitals__group--health">
+          <div className="game-vitals__row">
+            <span className="game-vitals__label">Hull</span>
+            <span className="game-vitals__value">
+              {Math.round(vitals.health)} / {Math.round(vitals.maxHealth)}
+            </span>
+          </div>
+          <Meter
+            meter={{
+              value: healthFraction,
+              fillColor: healthColor,
+              backgroundColor: "#17202b",
+            }}
+          />
+        </div>
+        <div className="game-vitals__group game-vitals__group--shield">
+          <div className="game-vitals__row">
+            <span className="game-vitals__label">Shield</span>
+            <span className="game-vitals__value">
+              {Math.round(effectiveShieldCapacityFraction * 100)}% CAP
+            </span>
+          </div>
+          <Meter
+            meter={{
+              value: effectiveShieldCapacityFraction,
+              fillColor: defensesBoosted ? "#78e8ff" : "#4ea7c5",
+              backgroundColor: "#0d1e2e",
+            }}
+          />
+        </div>
       </div>
     </section>
   );
