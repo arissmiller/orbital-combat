@@ -6,11 +6,12 @@ This directory contains a minimal authoritative server scaffold for browser mult
 
 - Accepts WebSocket clients on `/ws`
 - Generates lobby room codes and creates rooms on-demand (up to 4 active rooms)
-- Broadcasts joinable room directory updates for lobby browsing (`room-list`)
-- Supports create/join/leave/ready/start-match flow
+- Broadcasts joinable room directory updates for lobby browsing and live match drop-ins (`room-list`)
+- Supports create/join/leave/ready/start-match flow (including solo start and joining active matches)
 - Runs an authoritative simulation at 20 Hz on `Caldera Twin-Moon Arena`
 - Simulates a gas giant with two moons using different orbital eccentricities
 - Broadcasts room state and simulation snapshots
+- Keeps running matches alive when one player disconnects (room only ends when empty)
 - Can serve built frontend assets from the same process/port (`dist/`)
 
 ## Not implemented yet

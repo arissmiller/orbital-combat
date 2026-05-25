@@ -1,7 +1,6 @@
 import type {
   PlayerInputCommand,
   SimCelestialBodySnapshot,
-  SimPlayerSnapshot,
   SimulationSnapshot,
 } from "./protocol.js";
 import {
@@ -11,25 +10,22 @@ import {
   type MultiplayerMapDefinition,
   type MultiplayerMapRuntime,
 } from "./map.js";
+import {
+  buildSimPlayerSnapshots,
+  createSpawnedPlayers,
+  DEFAULT_MULTIPLAYER_SIMULATION_TUNING,
+  round3,
+  stepMultiplayerPlayers,
+  type MultiplayerSimPlayerState,
+} from "../shared/multiplayer-simulation-core.js";
+import { computePlayerWarningChannels } from "./player-warning-channels.js";
 
-const PLAYER_ACCELERATION = 240;
-const PLAYER_DRAG_PER_SECOND = 2.4;
-const PLAYER_MAX_SPEED = 420;
-const PLAYER_TURN_RATE = Math.PI * 1.4;
 const SPAWN_RADIUS_FALLBACK = 180;
-const GRAVITY_CONSTANT = 46;
-const GRAVITY_SOFTENING_DISTANCE = 120;
-const PLAYER_COLLISION_PADDING = 18;
-
-interface SimPlayerState {
-  playerId: string;
-  x: number;
-  y: number;
-  vx: number;
-  vy: number;
-  heading: number;
-  lastProcessedInputSequence: number | null;
-}
+const PLAYER_RESPAWN_DELAY_SECONDS = 2.25;
+const PLAYER_RESPAWN_GRACE_SECONDS = 1.35;
+const PLAYER_DEATH_IMPACT_SPEED = 0.5;
+const RESPAWN_PLAYER_CLEARANCE = 110;
+const RESPAWN_CELESTIAL_CLEARANCE_PADDING = 42;
 
 export interface RoomSimulationState {
   roomCode: string;
@@ -38,7 +34,7 @@ export interface RoomSimulationState {
   mapDefinition: MultiplayerMapDefinition;
   mapRuntime: MultiplayerMapRuntime;
   celestialBodies: SimCelestialBodySnapshot[];
-  players: Map<string, SimPlayerState>;
+  players: Map<string, MultiplayerSimPlayerState>;
 }
 
 export function createRoomSimulation(
@@ -56,31 +52,16 @@ export function createRoomSimulation(
     mapDefinition.spawnOrbitRadius > 0
       ? mapDefinition.spawnOrbitRadius
       : SPAWN_RADIUS_FALLBACK;
-  const orbitDirectionSign = mapDefinition.spawnOrbitDirection === "ccw" ? -1 : 1;
-  const orbitalSpeed =
-    primaryBody && spawnRadius > 0
-      ? Math.sqrt((GRAVITY_CONSTANT * primaryBody.mass) / spawnRadius)
-      : 0;
-
-  const players = new Map<string, SimPlayerState>();
-  const count = Math.max(playerIds.length, 1);
-
-  playerIds.forEach((playerId, index) => {
-    const angle = (Math.PI * 2 * index) / count;
-    const tangentAngle = angle + orbitDirectionSign * (Math.PI * 0.5);
-    const spawnCenterX = primaryBody?.x ?? 0;
-    const spawnCenterY = primaryBody?.y ?? 0;
-
-    players.set(playerId, {
-      playerId,
-      x: spawnCenterX + Math.cos(angle) * spawnRadius,
-      y: spawnCenterY + Math.sin(angle) * spawnRadius,
-      vx: Math.cos(tangentAngle) * orbitalSpeed,
-      vy: Math.sin(tangentAngle) * orbitalSpeed,
-      heading: tangentAngle,
-      lastProcessedInputSequence: null,
-    });
+  const players = createSpawnedPlayers(playerIds, {
+    spawnCenterX: primaryBody?.x ?? 0,
+    spawnCenterY: primaryBody?.y ?? 0,
+    spawnRadius,
+    spawnOrbitDirection: mapDefinition.spawnOrbitDirection,
+    primaryMass: primaryBody?.mass ?? null,
   });
+  for (const player of players.values()) {
+    armPlayerForLife(player, PLAYER_RESPAWN_GRACE_SECONDS);
+  }
 
   return {
     roomCode,
@@ -100,6 +81,63 @@ export function removePlayerFromSimulation(
   simulation.players.delete(playerId);
 }
 
+export function addPlayerToSimulation(
+  simulation: RoomSimulationState,
+  playerId: string,
+): boolean {
+  if (simulation.players.has(playerId)) {
+    return false;
+  }
+
+  const primaryBody =
+    simulation.celestialBodies.find((body) => body.parentId === null)
+    ?? simulation.celestialBodies[0]
+    ?? null;
+  const spawnRadius =
+    simulation.mapDefinition.spawnOrbitRadius > 0
+      ? simulation.mapDefinition.spawnOrbitRadius
+      : SPAWN_RADIUS_FALLBACK;
+  const spawnCenterX = primaryBody?.x ?? 0;
+  const spawnCenterY = primaryBody?.y ?? 0;
+  const spawnedPlayers = createSpawnedPlayers([playerId], {
+    spawnCenterX,
+    spawnCenterY,
+    spawnRadius,
+    spawnOrbitDirection: simulation.mapDefinition.spawnOrbitDirection,
+    primaryMass: primaryBody?.mass ?? null,
+  });
+  const spawnedPlayer = spawnedPlayers.get(playerId);
+  if (!spawnedPlayer) {
+    return false;
+  }
+
+  const spawnAngle = pickDropInSpawnAngle(
+    simulation,
+    spawnCenterX,
+    spawnCenterY,
+    spawnRadius,
+  );
+  const orbitDirectionSign =
+    simulation.mapDefinition.spawnOrbitDirection === "ccw" ? -1 : 1;
+  const tangentAngle = spawnAngle + orbitDirectionSign * (Math.PI * 0.5);
+  const orbitalSpeed = Math.hypot(spawnedPlayer.vx, spawnedPlayer.vy);
+
+  spawnedPlayer.x = spawnCenterX + Math.cos(spawnAngle) * spawnRadius;
+  spawnedPlayer.y = spawnCenterY + Math.sin(spawnAngle) * spawnRadius;
+  spawnedPlayer.vx = Math.cos(tangentAngle) * orbitalSpeed;
+  spawnedPlayer.vy = Math.sin(tangentAngle) * orbitalSpeed;
+  spawnedPlayer.heading = tangentAngle;
+  spawnedPlayer.stableMotionHeading = tangentAngle;
+  spawnedPlayer.lastProcessedInputSequence = null;
+  spawnedPlayer.throttle = 0;
+  spawnedPlayer.thrustHeading = null;
+  spawnedPlayer.superBurnActive = false;
+  armPlayerForLife(spawnedPlayer, PLAYER_RESPAWN_GRACE_SECONDS);
+
+  simulation.players.set(playerId, spawnedPlayer);
+  return true;
+}
+
 export function stepRoomSimulation(
   simulation: RoomSimulationState,
   inputByPlayerId: ReadonlyMap<string, PlayerInputCommand | null>,
@@ -111,60 +149,39 @@ export function stepRoomSimulation(
     simulation.mapRuntime,
     simulation.elapsedSeconds,
   );
-
-  for (const player of simulation.players.values()) {
-    const input = inputByPlayerId.get(player.playerId) ?? null;
-    if (input) {
-      player.lastProcessedInputSequence = input.sequence;
-
-      const accelerationX = input.thrustX * PLAYER_ACCELERATION;
-      const accelerationY = input.thrustY * PLAYER_ACCELERATION;
-      player.vx += accelerationX * stepSeconds;
-      player.vy += accelerationY * stepSeconds;
-      player.heading += input.yaw * PLAYER_TURN_RATE * stepSeconds;
-    }
-
-    applyCelestialGravity(player, simulation.celestialBodies, stepSeconds);
-
-    const dragMultiplier = Math.max(0, 1 - PLAYER_DRAG_PER_SECOND * stepSeconds);
-    player.vx *= dragMultiplier;
-    player.vy *= dragMultiplier;
-
-    const speed = Math.hypot(player.vx, player.vy);
-    if (speed > PLAYER_MAX_SPEED && speed > 0) {
-      const clampedMultiplier = PLAYER_MAX_SPEED / speed;
-      player.vx *= clampedMultiplier;
-      player.vy *= clampedMultiplier;
-    }
-
-    player.x += player.vx * stepSeconds;
-    player.y += player.vy * stepSeconds;
-
-    resolveCelestialCollisions(player, simulation.celestialBodies);
-  }
+  stepMultiplayerPlayers(
+    simulation.players,
+    inputByPlayerId,
+    simulation.celestialBodies,
+    stepSeconds,
+    DEFAULT_MULTIPLAYER_SIMULATION_TUNING,
+  );
+  updatePlayerLifeStates(simulation);
 }
 
 export function buildSimulationSnapshot(
   simulation: RoomSimulationState,
+  inputByPlayerId: ReadonlyMap<string, PlayerInputCommand | null>,
 ): SimulationSnapshot {
-  const players: SimPlayerSnapshot[] = [];
-  for (const player of simulation.players.values()) {
-    players.push({
-      playerId: player.playerId,
-      x: round3(player.x),
-      y: round3(player.y),
-      vx: round3(player.vx),
-      vy: round3(player.vy),
-      heading: round3(player.heading),
-      lastProcessedInputSequence: player.lastProcessedInputSequence,
-    });
+  const warningChannels = computePlayerWarningChannels(
+    simulation.players,
+    inputByPlayerId,
+    simulation.celestialBodies,
+  );
+
+  const playerSnapshots = buildSimPlayerSnapshots(simulation.players);
+  for (const player of playerSnapshots) {
+    const warnings = warningChannels.get(player.playerId);
+    if (warnings && warnings.length > 0) {
+      player.warnings = warnings;
+    }
   }
 
   return {
     roomCode: simulation.roomCode,
     tick: simulation.tick,
     sentAtMs: Date.now(),
-    players,
+    players: playerSnapshots,
     mapId: simulation.mapDefinition.id,
     celestialBodies: simulation.celestialBodies.map((body) => ({
       id: body.id,
@@ -181,59 +198,180 @@ export function buildSimulationSnapshot(
   };
 }
 
-function applyCelestialGravity(
-  player: SimPlayerState,
-  celestialBodies: readonly SimCelestialBodySnapshot[],
-  stepSeconds: number,
-): void {
-  for (const body of celestialBodies) {
-    const dx = body.x - player.x;
-    const dy = body.y - player.y;
-    const distanceSq = dx * dx + dy * dy;
+function pickDropInSpawnAngle(
+  simulation: RoomSimulationState,
+  centerX: number,
+  centerY: number,
+  spawnRadius: number,
+  playerIdToIgnore?: string,
+): number {
+  if (simulation.players.size === 0 || spawnRadius <= 0) {
+    return 0;
+  }
 
-    if (distanceSq <= 1e-6) {
+  const candidateCount = Math.max(16, Math.min(64, simulation.players.size * 8));
+  let bestAngle = 0;
+  let bestClearance = Number.NEGATIVE_INFINITY;
+  for (let index = 0; index < candidateCount; index += 1) {
+    const angle = (Math.PI * 2 * index) / candidateCount;
+    const x = centerX + Math.cos(angle) * spawnRadius;
+    const y = centerY + Math.sin(angle) * spawnRadius;
+    let minClearance = Number.POSITIVE_INFINITY;
+
+    for (const body of simulation.celestialBodies) {
+      const distance = Math.hypot(body.x - x, body.y - y);
+      const safeDistance =
+        body.radius
+        + DEFAULT_MULTIPLAYER_SIMULATION_TUNING.playerCollisionPadding
+        + RESPAWN_CELESTIAL_CLEARANCE_PADDING;
+      minClearance = Math.min(minClearance, distance - safeDistance);
+    }
+
+    for (const player of simulation.players.values()) {
+      if (player.playerId === playerIdToIgnore) {
+        continue;
+      }
+      if (player.life?.alive === false) {
+        continue;
+      }
+      const dx = player.x - x;
+      const dy = player.y - y;
+      const distance = Math.hypot(dx, dy);
+      minClearance = Math.min(minClearance, distance - RESPAWN_PLAYER_CLEARANCE);
+    }
+
+    if (minClearance > bestClearance) {
+      bestClearance = minClearance;
+      bestAngle = angle;
+    }
+  }
+
+  return bestAngle;
+}
+
+function updatePlayerLifeStates(simulation: RoomSimulationState): void {
+  for (const player of simulation.players.values()) {
+    const life = getOrCreatePlayerLife(player);
+    const impactSpeed = player.lastCollisionImpactSpeed ?? 0;
+
+    if (life.alive) {
+      if (
+        life.respawnGraceSeconds <= 0
+        && impactSpeed >= PLAYER_DEATH_IMPACT_SPEED
+      ) {
+        destroyPlayerForRespawn(player);
+      }
       continue;
     }
 
-    const distance = Math.sqrt(distanceSq);
-    const softeningRadius = body.radius + GRAVITY_SOFTENING_DISTANCE;
-    const softenedDistanceSq = Math.max(distanceSq, softeningRadius * softeningRadius);
-    const accelerationMagnitude = (GRAVITY_CONSTANT * body.mass) / softenedDistanceSq;
-
-    player.vx += (dx / distance) * accelerationMagnitude * stepSeconds;
-    player.vy += (dy / distance) * accelerationMagnitude * stepSeconds;
+    if (life.respawnTimerSeconds <= 0) {
+      respawnPlayer(simulation, player);
+    }
   }
 }
 
-function resolveCelestialCollisions(
-  player: SimPlayerState,
-  celestialBodies: readonly SimCelestialBodySnapshot[],
+function destroyPlayerForRespawn(player: MultiplayerSimPlayerState): void {
+  const life = getOrCreatePlayerLife(player);
+  if (!life.alive) {
+    return;
+  }
+
+  life.alive = false;
+  life.deaths += 1;
+  life.respawnTimerSeconds = PLAYER_RESPAWN_DELAY_SECONDS;
+  life.respawnGraceSeconds = 0;
+
+  player.vx = 0;
+  player.vy = 0;
+  player.throttle = 0;
+  player.thrustHeading = null;
+  player.superBurnActive = false;
+  player.lastCollisionImpactSpeed = 0;
+}
+
+function respawnPlayer(
+  simulation: RoomSimulationState,
+  player: MultiplayerSimPlayerState,
 ): void {
-  for (const body of celestialBodies) {
-    const dx = player.x - body.x;
-    const dy = player.y - body.y;
-    const distance = Math.hypot(dx, dy);
-    const minDistance = body.radius + PLAYER_COLLISION_PADDING;
+  const primaryBody =
+    simulation.celestialBodies.find((body) => body.parentId === null)
+    ?? simulation.celestialBodies[0]
+    ?? null;
+  const spawnRadius =
+    simulation.mapDefinition.spawnOrbitRadius > 0
+      ? simulation.mapDefinition.spawnOrbitRadius
+      : SPAWN_RADIUS_FALLBACK;
+  const spawnCenterX = primaryBody?.x ?? 0;
+  const spawnCenterY = primaryBody?.y ?? 0;
+  const spawnAngle = pickDropInSpawnAngle(
+    simulation,
+    spawnCenterX,
+    spawnCenterY,
+    spawnRadius,
+    player.playerId,
+  );
+  const orbitDirectionSign =
+    simulation.mapDefinition.spawnOrbitDirection === "ccw" ? -1 : 1;
+  const tangentAngle = spawnAngle + orbitDirectionSign * (Math.PI * 0.5);
+  const orbitalSpeed =
+    primaryBody?.mass && spawnRadius > 0
+      ? Math.sqrt(
+          (DEFAULT_MULTIPLAYER_SIMULATION_TUNING.gravitationalConstant * primaryBody.mass) /
+            spawnRadius,
+        )
+      : 0;
 
-    if (distance >= minDistance) {
-      continue;
-    }
+  player.x = spawnCenterX + Math.cos(spawnAngle) * spawnRadius;
+  player.y = spawnCenterY + Math.sin(spawnAngle) * spawnRadius;
+  player.vx = (primaryBody?.vx ?? 0) + Math.cos(tangentAngle) * orbitalSpeed;
+  player.vy = (primaryBody?.vy ?? 0) + Math.sin(tangentAngle) * orbitalSpeed;
+  player.heading = tangentAngle;
+  player.stableMotionHeading = tangentAngle;
+  player.lastProcessedInputSequence = null;
+  player.throttle = 0;
+  player.thrustHeading = null;
+  player.superBurnActive = false;
+  player.lastCollisionImpactSpeed = 0;
+  refillPlayerSystems(player);
+  armPlayerForLife(player, PLAYER_RESPAWN_GRACE_SECONDS);
+}
 
-    const normalX = distance > 1e-6 ? dx / distance : 1;
-    const normalY = distance > 1e-6 ? dy / distance : 0;
-    const penetration = minDistance - distance;
+function armPlayerForLife(
+  player: MultiplayerSimPlayerState,
+  respawnGraceSeconds: number,
+): void {
+  const life = getOrCreatePlayerLife(player);
+  life.alive = true;
+  life.respawnTimerSeconds = 0;
+  life.respawnGraceSeconds = Math.max(0, respawnGraceSeconds);
+}
 
-    player.x += normalX * penetration;
-    player.y += normalY * penetration;
+function refillPlayerSystems(player: MultiplayerSimPlayerState): void {
+  if (!player.systems) {
+    return;
+  }
 
-    const radialVelocity = player.vx * normalX + player.vy * normalY;
-    if (radialVelocity < 0) {
-      player.vx -= radialVelocity * normalX;
-      player.vy -= radialVelocity * normalY;
-    }
+  player.systems.boosted = "engines";
+  for (const subsystem of [
+    player.systems.engines,
+    player.systems.scanners,
+    player.systems.weapons,
+    player.systems.defenses,
+  ]) {
+    subsystem.charge = subsystem.maxCharge;
   }
 }
 
-function round3(value: number): number {
-  return Math.round(value * 1000) / 1000;
+function getOrCreatePlayerLife(
+  player: MultiplayerSimPlayerState,
+): NonNullable<MultiplayerSimPlayerState["life"]> {
+  if (!player.life) {
+    player.life = {
+      alive: true,
+      respawnTimerSeconds: 0,
+      respawnGraceSeconds: 0,
+      deaths: 0,
+    };
+  }
+  return player.life;
 }

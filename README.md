@@ -85,5 +85,7 @@ This ensures both `dist/` (frontend) and `dist-server/` (multiplayer server) are
 The in-game Multiplayer menu now connects to the WebSocket server scaffold.
 
 - Set `VITE_MULTIPLAYER_WS_URL` to override the default client URL.
-- Default client URL is `ws://<current-host>:8787/ws` (or `wss://` on HTTPS).
-- From the Multiplayer menu you can connect, create/join rooms, ready/unready, start match (host), leave, and ping.
+- Default client URL is:
+  - Localhost: `ws://<localhost>:8787/ws`
+  - Deployed/shared host: same-origin `/ws` (`wss://<host>/ws` on HTTPS)
+- From the Multiplayer menu you can connect, create/join rooms, ready/unready, start match (host), leave, ping, and drop into live matches with open slots.

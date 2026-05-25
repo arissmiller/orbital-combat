@@ -1,6 +1,7 @@
 import type { Application } from "pixi.js";
 import { mountLevelSelectScene } from "./level-select-scene";
 import { mountMainMenuScene } from "./main-menu-scene";
+import { mountMultiplayerMatchScene } from "./multiplayer-match-scene";
 import { mountMultiplayerMenuScene } from "./multiplayer-menu-scene";
 import { mountPrototypeScene } from "./prototype-scene";
 import { mountSettingsMenuScene } from "./settings-menu-scene";
@@ -17,6 +18,7 @@ type BuiltInSceneId =
   | "main-menu"
   | "settings-menu"
   | "multiplayer-menu"
+  | "multiplayer-match"
   | "tutorial-select"
   | "level-select"
   | "prototype"
@@ -42,6 +44,7 @@ const SCENE_FACTORIES: Record<BuiltInSceneId, SceneFactory> = {
   "main-menu": mountMainMenuScene,
   "settings-menu": mountSettingsMenuScene,
   "multiplayer-menu": mountMultiplayerMenuScene,
+  "multiplayer-match": mountMultiplayerMatchScene,
   "tutorial-select": mountTutorialSelectScene,
   "level-select": mountLevelSelectScene,
   prototype: (context) => {

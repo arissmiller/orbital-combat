@@ -98,3 +98,31 @@ jobs:
 
           echo "Deployment failed after ${max_attempts} attempts."
           exit 1
+
+      - name: Verify Multiplayer Server Runtime
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_PROD_TOKEN }}
+          RAILWAY_PROJECT_ID: ${{ vars.RAILWAY_PROD_PROJECT_ID }}
+          RAILWAY_ENVIRONMENT: ${{ vars.RAILWAY_PROD_ENVIRONMENT }}
+          RAILWAY_SERVICE: ${{ vars.RAILWAY_PROD_SERVICE }}
+        run: |
+          set -euo pipefail
+
+          status_output="$(railway service status --service "$RAILWAY_SERVICE" --environment "$RAILWAY_ENVIRONMENT" --project "$RAILWAY_PROJECT_ID")"
+          echo "$status_output"
+
+          deployment_id="$(echo "$status_output" | awk '/Deployment:/ {print $2}')"
+          if [ -z "$deployment_id" ]; then
+            echo "Could not determine deployment ID from Railway service status output."
+            exit 1
+          fi
+
+          echo "Checking startup logs for deployment $deployment_id"
+          logs_output="$(railway logs --service "$RAILWAY_SERVICE" --environment "$RAILWAY_ENVIRONMENT" --project "$RAILWAY_PROJECT_ID" --deployment "$deployment_id" --lines 160 || true)"
+          echo "$logs_output"
+
+          if ! echo "$logs_output" | grep -q "\\[server\\] websocket path /ws"; then
+            echo "Expected multiplayer server startup log was not found."
+            echo "This usually means the target service is not running the Node server start command."
+            exit 1
+          fi

@@ -122,6 +122,7 @@ httpServer.on("error", (error) => {
 });
 
 httpServer.listen(port, host, () => {
+  roomManager.initPersistentRooms();
   console.log(`[server] listening on http://${host}:${port}`);
   console.log(`[server] websocket path ${wsPath}`);
   console.log(`[server] tick rate ${SERVER_TICK_RATE} Hz`);

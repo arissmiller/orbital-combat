@@ -123,6 +123,7 @@ import {
   updateGameWarningManager,
   type GameWarningState,
 } from "../warnings/game-warning-manager";
+import { resolveCollisionWarning } from "../warnings/resolve-collision-warning";
 import { createSceneEventQueue } from "./scene-event-queue";
 import type { SceneCameraOverride } from "./scene-camera";
 import {
@@ -138,6 +139,7 @@ import { PHYSICS_TUNING } from "../physics/physics-tuning";
 import { OrbitalWorld, type CollisionEvent } from "../physics/orbital-world";
 import { WORLD_ENTITY_STYLES } from "../rendering/world-entity-styles";
 import { createCelestialSprite } from "../rendering/celestial-generator";
+import { createInterceptorSprite } from "../rendering/ship-sprites";
 import {
   drawDefenseLockOverlay,
   drawDefenseScannerCones,
@@ -1068,9 +1070,9 @@ export function mountPrototypeScene(
   const boostedPreview = createPathRenderer(world);
   const engineCompassOverlay = shipOverlayRoot;
 
-  const interceptor = new Graphics()
-    .poly([0, -18, 14, 12, 0, 6, -14, 12])
-    .fill(0xffc857);
+  const interceptor = createInterceptorSprite({
+    fillColor: 0xffc857,
+  });
   world.addChild(interceptor);
 
   const explosion = new Graphics();
@@ -3369,6 +3371,22 @@ export function mountPrototypeScene(
     );
     const enemyLockWarningActive =
       strongestEnemyLock !== null || registeredIncomingTorpedoes.length > 0;
+    const collisionWarning = resolveCollisionWarning(
+      isCrashed ? null : {
+        x: interceptorPosition.x,
+        y: interceptorPosition.y,
+        vx: interceptorBody.velocity.x,
+        vy: interceptorBody.velocity.y,
+      },
+      celestialVisuals.map((v) => ({
+        name: v.config.name,
+        x: v.body.position.x,
+        y: v.body.position.y,
+        vx: v.body.velocity.x,
+        vy: v.body.velocity.y,
+        radius: v.body.radius,
+      })),
+    );
     activeWarnings = updateGameWarningManager(warningManager, [
       {
         id: "tutorial-complete",
@@ -3420,6 +3438,22 @@ export function mountPrototypeScene(
         accentColor: "#ff8a6a",
         priority: WARNING_PRIORITIES.navSolutionUnstable,
         active: navigationWarning !== null,
+      },
+      {
+        id: "collision-imminent",
+        title: "COLLISION IMMINENT",
+        message: collisionWarning?.id === "collision-imminent" ? collisionWarning.message : "",
+        accentColor: "#ff7b72",
+        priority: 290,
+        active: collisionWarning?.id === "collision-imminent",
+      },
+      {
+        id: "collision-warning",
+        title: "IMPACT TRAJECTORY",
+        message: collisionWarning?.id === "collision-warning" ? collisionWarning.message : "",
+        accentColor: "#ffbd59",
+        priority: 210,
+        active: collisionWarning?.id === "collision-warning",
       },
     ], elapsedSeconds);
     const scannerStatus =

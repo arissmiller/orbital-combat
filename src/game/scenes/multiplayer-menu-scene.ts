@@ -5,22 +5,42 @@ import {
   type MenuCardState,
 } from "../../ui/game-menu-store";
 import {
-  BrowserMultiplayerClient,
   createDefaultMultiplayerServerUrl,
+  type BrowserMultiplayerClient,
   type MultiplayerClientState,
 } from "../network/browser-multiplayer-client";
+import {
+  consumeShouldAutoJoinRunningRoom,
+  disconnectMultiplayerClient,
+  getOrCreateMultiplayerClient,
+} from "../network/multiplayer-session";
 import type { SceneContext, SceneHandle } from "./scene-manager";
 
 const MULTIPLAYER_NAME_KEY = "orbital-combat.multiplayer.display-name";
 const MULTIPLAYER_SERVER_URL_KEY = "orbital-combat.multiplayer.server-url";
 
 export function mountMultiplayerMenuScene(context: SceneContext): SceneHandle {
-  const client = new BrowserMultiplayerClient({
-    serverUrl:
-      readStoredValue(MULTIPLAYER_SERVER_URL_KEY)
-      ?? createDefaultMultiplayerServerUrl(),
+  const defaultServerUrl = createDefaultMultiplayerServerUrl();
+  const storedServerUrl = readStoredValue(MULTIPLAYER_SERVER_URL_KEY);
+  const initialServerUrl = resolveInitialServerUrl(
+    storedServerUrl,
+    defaultServerUrl,
+  );
+  if (storedServerUrl !== null && storedServerUrl !== initialServerUrl) {
+    writeStoredValue(MULTIPLAYER_SERVER_URL_KEY, initialServerUrl);
+  }
+
+  const client = getOrCreateMultiplayerClient({
+    serverUrl: initialServerUrl,
     displayName: readStoredValue(MULTIPLAYER_NAME_KEY) ?? "Pilot",
   });
+  const allowAutoJoinRunningRoom = consumeShouldAutoJoinRunningRoom();
+  const initialRoom = client.getState().room;
+  let suppressedRunningRoomCode =
+    !allowAutoJoinRunningRoom && initialRoom?.status === "running"
+      ? initialRoom.code
+      : null;
+  let loadingMatchScene = false;
 
   const promptDisplayName = (): void => {
     if (typeof window === "undefined") {
@@ -95,6 +115,19 @@ export function mountMultiplayerMenuScene(context: SceneContext): SceneHandle {
 
   const syncMenu = (): void => {
     const state = client.getState();
+    if (suppressedRunningRoomCode && state.room?.code !== suppressedRunningRoomCode) {
+      suppressedRunningRoomCode = null;
+    }
+    if (
+      (allowAutoJoinRunningRoom || suppressedRunningRoomCode === null)
+      && !loadingMatchScene
+      && state.room?.status === "running"
+    ) {
+      loadingMatchScene = true;
+      context.load("multiplayer-match");
+      return;
+    }
+
     const lobbyBrowserMode =
       state.connectionStatus === "connected" && !state.room;
     setGameMenuState({
@@ -117,7 +150,10 @@ export function mountMultiplayerMenuScene(context: SceneContext): SceneHandle {
         {
           label: "Back",
           accentColor: "#8ee8ff",
-          onSelect: () => context.load("main-menu"),
+          onSelect: () => {
+            disconnectMultiplayerClient("Left multiplayer.");
+            context.load("main-menu");
+          },
         },
       ],
     });
@@ -125,11 +161,13 @@ export function mountMultiplayerMenuScene(context: SceneContext): SceneHandle {
 
   const unsubscribe = client.subscribe(syncMenu);
   syncMenu();
+  if (client.getState().connectionStatus === "disconnected") {
+    client.connect();
+  }
 
   return {
     dispose() {
       unsubscribe();
-      client.disconnect("Left multiplayer menu.");
       resetGameMenuState();
     },
   };
@@ -307,7 +345,7 @@ function buildCards(
       key: "empty-room-list",
       eyebrow: "BROWSE",
       title: "No Joinable Rooms",
-      description: "No lobby rooms are open right now. Create one or refresh the list.",
+      description: "No open rooms are joinable right now. Create one or refresh the list.",
       accentColor: "#8ee8ff",
       action: {
         label: "Refresh",
@@ -318,17 +356,18 @@ function buildCards(
   } else {
     for (const room of state.availableRooms) {
       const mapName = room.map?.name ?? "Unknown map";
+      const isRunning = room.status === "running";
       cards.push({
         key: `room-${room.code}`,
-        eyebrow: "JOIN",
+        eyebrow: isRunning ? "DROP IN" : "JOIN",
         title: `Room ${room.code}`,
         description:
-          `${room.playerCount}/${room.maxPlayers} pilots | Host ${room.hostDisplayName}`
+          `${room.status.toUpperCase()} | ${room.playerCount}/${room.maxPlayers} pilots | Host ${room.hostDisplayName}`
           + ` | ${mapName}`,
-        accentColor: "#7fe7d0",
+        accentColor: isRunning ? "#8ee8ff" : "#7fe7d0",
         action: {
-          label: "Join Room",
-          accentColor: "#7fe7d0",
+          label: isRunning ? "Drop In" : "Join Room",
+          accentColor: isRunning ? "#8ee8ff" : "#7fe7d0",
           onSelect: () => client.joinRoom(room.code),
         },
       });
@@ -380,7 +419,9 @@ function buildDescription(state: MultiplayerClientState): string {
     } else {
       const labels = state.availableRooms
         .slice(0, 4)
-        .map((room) => `${room.code} (${room.playerCount}/${room.maxPlayers})`)
+        .map((room) =>
+          `${room.code} ${room.status === "running" ? "[LIVE]" : "[LOBBY]"} (${room.playerCount}/${room.maxPlayers})`
+        )
         .join(", ");
       parts.push(`Available rooms: ${labels}`);
     }
@@ -427,4 +468,50 @@ function writeStoredValue(key: string, value: string): void {
   } catch {
     // Ignore storage failures in private browsing or restrictive environments.
   }
+}
+
+function resolveInitialServerUrl(storedValue: string | null, fallback: string): string {
+  const stored = storedValue?.trim();
+  if (!stored) {
+    return fallback;
+  }
+  if (isLegacyRailwayPortUrl(stored)) {
+    return fallback;
+  }
+  return stored;
+}
+
+function isLegacyRailwayPortUrl(url: string): boolean {
+  if (typeof window === "undefined") {
+    return false;
+  }
+  const currentHostname = window.location.hostname || "";
+  if (isLocalhostHostname(currentHostname)) {
+    return false;
+  }
+
+  try {
+    const parsed = new URL(url);
+    if (isLocalhostHostname(parsed.hostname)) {
+      return true;
+    }
+    const expectedProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+    return (
+      parsed.protocol === expectedProtocol
+      && parsed.hostname === currentHostname
+      && parsed.port === "8787"
+      && parsed.pathname === "/ws"
+    );
+  } catch {
+    return false;
+  }
+}
+
+function isLocalhostHostname(hostname: string): boolean {
+  return (
+    hostname === "localhost"
+    || hostname === "127.0.0.1"
+    || hostname === "0.0.0.0"
+    || hostname === "::1"
+  );
 }
