@@ -60,14 +60,14 @@ export const COMBAT_BALANCE: CombatBalance = {
     splashRadius: 54,
     inheritedSourceLockProgress: 0.65,
     scannerLockDecayPerSecond: 2.4,
-    scannerLockBaseRate: 0.32,
-    scannerLockChargeFactor: 0.55,
+    scannerLockBaseRate: 1.15,
+    scannerLockChargeFactor: 1.6,
   },
   defenses: {
     durability: 0.42,
     disintegratorLockThreshold: 0.55,
     scannerLockDecayPerSecond: 1.8,
-    scannerLockBaseRate: 0.32,
-    scannerLockChargeFactor: 0.55,
+    scannerLockBaseRate: 1.2,
+    scannerLockChargeFactor: 1.7,
   },
 };

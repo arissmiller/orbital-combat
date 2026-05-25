@@ -7,10 +7,13 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "build:server": "rm -rf dist-server && tsc -p tsconfig.server.json",
+    "build:deploy": "npm run build && npm run build:server",
+    "start": "npm run server:start",
     "preview": "vite preview",
     "server:dev": "tsx watch server/main.ts",
-    "server:build": "tsc -p tsconfig.server.json",
-    "server:start": "node dist-server/main.js",
+    "server:build": "npm run build:server",
+    "server:start": "node dist-server/server/main.js",
     "deploy:dev": "railway up --ci --environment dev"
   },
   "license": "MIT",

@@ -2,6 +2,7 @@ import type { GameSceneId } from "./scene-manager";
 
 type DebugLaunchableSceneId =
   | "multiplayer-menu"
+  | "multiplayer-match"
   | "tutorial-select"
   | "prototype"
   | "prototype-classic"

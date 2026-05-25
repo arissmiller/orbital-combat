@@ -11,8 +11,9 @@ A lightweight authoritative multiplayer scaffold now lives in `server/`.
 
 - Transport: WebSockets (`ws`)
 - Runtime: Node.js
-- Rooms: in-memory only (no persistence yet)
+- Rooms: in-memory, on-demand, capped at 4 active rooms
 - Tick loop: fixed 20 Hz
+- Default map: `Caldera Twin-Moon Arena` (gas giant + 2 moons with distinct eccentric orbits)
 
 ### Run in development
 
@@ -30,9 +31,11 @@ Defaults:
 ### Build and run
 
 ```bash
-npm run server:build
+npm run build:server
 npm run server:start
 ```
+
+When `dist/index.html` exists (run `npm run build`), `npm run server:start` also serves the frontend from the same process on the same host/port as the WebSocket multiplayer server.
 
 ### Deploy to Railway production from GitHub
 
@@ -41,25 +44,48 @@ This repo includes a GitHub Actions workflow at `.github/workflows/railway-produ
 It deploys on pushes to `main` (and can also be run manually from the Actions tab).
 
 1. In GitHub, go to `Settings -> Secrets and variables -> Actions`.
-2. Add repository secret `RAILWAY_TOKEN`.
+2. Add repository secret `RAILWAY_PROD_TOKEN`.
 3. Create that token in Railway as a **project token scoped to the `production` environment**.
+4. Add repository variables:
+   - `RAILWAY_PROD_PROJECT_ID`
+   - `RAILWAY_PROD_ENVIRONMENT` (usually `production`)
+   - `RAILWAY_PROD_SERVICE`
 
-Workflow target details:
+For the dev workflow (`.github/workflows/railway-dev.yml`), also add:
+
+- Repository secret `RAILWAY_DEV_TOKEN` (project token scoped to your dev environment)
+- Repository variables `RAILWAY_DEV_PROJECT_ID`, `RAILWAY_DEV_ENVIRONMENT`, and `RAILWAY_DEV_SERVICE`
+
+Production target details (values for the variables above):
 
 - Project ID: `f2871c98-bb92-4c08-937e-5bd516709cdb`
 - Environment: `production`
-- Service: `orbital-combat-web-prod`
+- Service ID: `982d2679-7a24-48db-b504-43f4e11ffe74` (`orbital-combat-web-prod`)
 
 ### Optional env vars
 
 - `MULTIPLAYER_HOST`
-- `MULTIPLAYER_PORT`
+- `MULTIPLAYER_PORT` (takes priority)
+- `PORT` (used automatically when `MULTIPLAYER_PORT` is unset, e.g. on Railway)
 - `MULTIPLAYER_WS_PATH`
+- `MULTIPLAYER_SERVE_FRONTEND` (`true`/`false`, default `true`)
+- `MULTIPLAYER_FRONTEND_DIST` (default `dist`)
+
+### Railway Deploy Commands
+
+If your Railway deployment is serving only static files, set explicit commands:
+
+- Build command: `npm run build:deploy`
+- Start command: `npm start`
+
+This ensures both `dist/` (frontend) and `dist-server/` (multiplayer server) are built, and the Node server starts in production.
 
 ## Browser Multiplayer Menu (Prototype)
 
 The in-game Multiplayer menu now connects to the WebSocket server scaffold.
 
 - Set `VITE_MULTIPLAYER_WS_URL` to override the default client URL.
-- Default client URL is `ws://<current-host>:8787/ws` (or `wss://` on HTTPS).
-- From the Multiplayer menu you can connect, create/join rooms, ready/unready, start match (host), leave, and ping.
+- Default client URL is:
+  - Localhost: `ws://<localhost>:8787/ws`
+  - Deployed/shared host: same-origin `/ws` (`wss://<host>/ws` on HTTPS)
+- From the Multiplayer menu you can connect, create/join rooms, ready/unready, start match (host), leave, ping, and drop into live matches with open slots.

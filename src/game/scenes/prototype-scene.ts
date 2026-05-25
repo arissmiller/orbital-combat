@@ -1,6 +1,7 @@
 import { Application, Container, Graphics, Sprite, Text, Texture, type Ticker } from "pixi.js";
 import { COMBAT_BALANCE } from "../combat/combat-balance";
 import {
+  applyCollisionEventsToDefenses,
   applyCollisionEventsToShip,
   applyDefenseStatusOverrides,
   classifyScannerContact,
@@ -122,6 +123,7 @@ import {
   updateGameWarningManager,
   type GameWarningState,
 } from "../warnings/game-warning-manager";
+import { resolveCollisionWarning } from "../warnings/resolve-collision-warning";
 import { createSceneEventQueue } from "./scene-event-queue";
 import type { SceneCameraOverride } from "./scene-camera";
 import {
@@ -137,6 +139,7 @@ import { PHYSICS_TUNING } from "../physics/physics-tuning";
 import { OrbitalWorld, type CollisionEvent } from "../physics/orbital-world";
 import { WORLD_ENTITY_STYLES } from "../rendering/world-entity-styles";
 import { createCelestialSprite } from "../rendering/celestial-generator";
+import { createInterceptorSprite } from "../rendering/ship-sprites";
 import {
   drawDefenseLockOverlay,
   drawDefenseScannerCones,
@@ -272,6 +275,12 @@ interface PlayerWeaponFireResult {
   neutralizedTorpedoCount: number;
 }
 
+interface PlayerTorpedoSalvoState {
+  clickTargetPosition: Vector2Like;
+  shotsRemaining: number;
+  nextLaunchAtSeconds: number;
+}
+
 interface RenderedPathState {
   points: Vector2Like[];
   sourcePositions: readonly Vector2Like[] | null;
@@ -377,6 +386,13 @@ const PLAYER_DEATH_AUDIO_CUE_ID = "player-death";
 const HELION_WEAPONS_TUTORIAL_SCENARIO_ID = "helion-weapons-training";
 const HELION_WEAPONS_TUTORIAL_REQUIRED_INTERCEPTS = 4;
 const TUTORIAL_COMPLETE_NOTIFICATION_SECONDS = 4;
+const PLAYER_TORPEDO_LAUNCH_SPEED = 42;
+const PLAYER_TORPEDO_THRUST = 460;
+const PLAYER_TORPEDO_TURN_RATE = 1.35;
+const PLAYER_TORPEDO_COOLDOWN_SECONDS = 1.15;
+const PLAYER_TORPEDO_WEAPON_CHARGE_COST = 0.18;
+const PLAYER_TORPEDO_SALVO_COUNT = 3;
+const PLAYER_TORPEDO_SALVO_INTERVAL_SECONDS = 0.22;
 const MAP_KILL_BORDER_PADDING = 1800;
 const MAP_KILL_BORDER_MIN_RADIUS = 5400;
 const MAP_KILL_BORDER_ARROW_DISTANCE = 540;
@@ -478,7 +494,7 @@ export function mountPrototypeScene(
   let tacticalViewActive = false;
   let fpsSmoothed = 60;
   const trainingStartingFuelFraction = 0.42;
-  const baseScannerRange = 1450;
+  const baseScannerRange = 5400;
   const baseDisintegratorRange = 280;
   const shipSystems = createShipSystemsState();
   if (orbitalFlightTrainingEnabled) {
@@ -1062,9 +1078,9 @@ export function mountPrototypeScene(
   const boostedPreview = createPathRenderer(world);
   const engineCompassOverlay = shipOverlayRoot;
 
-  const interceptor = new Graphics()
-    .poly([0, -18, 14, 12, 0, 6, -14, 12])
-    .fill(0xffc857);
+  const interceptor = createInterceptorSprite({
+    fillColor: 0xffc857,
+  });
   world.addChild(interceptor);
 
   const explosion = new Graphics();
@@ -1580,6 +1596,10 @@ export function mountPrototypeScene(
   let debugHudVisible = false;
   let weaponArmed = false;
   let weaponMode: PlayerWeaponMode = "disintegrator";
+  let playerTorpedoCooldownSeconds = 0;
+  let queuedPlayerTorpedoClickTarget: Vector2Like | null = null;
+  let pendingPlayerTorpedoSalvo: PlayerTorpedoSalvoState | null = null;
+  let selectedPlayerTorpedoLockTargetId: string | null = null;
   const trainingMissionState = createOrbitalFlightTrainingState();
   const nadirRandomGateRunState = createNadirRandomGateRunState();
   const genericMissionState =
@@ -1624,6 +1644,30 @@ export function mountPrototypeScene(
   });
 
   keyTracker.attach(window);
+  const handleCanvasPointerDown = (event: PointerEvent) => {
+    if (event.button !== 0) {
+      return;
+    }
+
+    const canvasBounds = app.canvas.getBoundingClientRect();
+    if (canvasBounds.width <= 0 || canvasBounds.height <= 0) {
+      return;
+    }
+
+    const screenPosition = {
+      x: ((event.clientX - canvasBounds.left) / canvasBounds.width) * app.screen.width,
+      y: ((event.clientY - canvasBounds.top) / canvasBounds.height) * app.screen.height,
+    };
+    queuedPlayerTorpedoClickTarget = convertScreenPointToWorldPoint(
+      screenPosition,
+      getScreenCenter(),
+      cameraCenter,
+      cameraZoom,
+    );
+  };
+  app.canvas.addEventListener("pointerdown", handleCanvasPointerDown, {
+    passive: true,
+  });
 
   applyCelestialState(
     simulation,
@@ -1695,6 +1739,31 @@ export function mountPrototypeScene(
     const enginesOnlyTraining = customTrainingMissionEnabled;
     const missionPauseActive = missionControl.pauseGameplay;
     const gameplayInputBlocked = pauseMenuOpen || missionControl.blockPlayerInput;
+    const clickTorpedoTarget = queuedPlayerTorpedoClickTarget;
+    queuedPlayerTorpedoClickTarget = null;
+    const playerRequestedTorpedoFire =
+      !enginesOnlyTraining &&
+      sceneActions.fireTorpedo &&
+      !interceptorBody.crashed &&
+      !gameplayInputBlocked &&
+      weaponArmed;
+    const playerRequestedTorpedoSalvo =
+      !enginesOnlyTraining &&
+      clickTorpedoTarget !== null &&
+      !interceptorBody.crashed &&
+      !gameplayInputBlocked &&
+      weaponArmed;
+    if (playerRequestedTorpedoSalvo && clickTorpedoTarget) {
+      pendingPlayerTorpedoSalvo = {
+        clickTargetPosition: clickTorpedoTarget,
+        shotsRemaining: PLAYER_TORPEDO_SALVO_COUNT,
+        nextLaunchAtSeconds: elapsedSeconds + playerTorpedoCooldownSeconds,
+      };
+      playerTorpedoCooldownSeconds = Math.max(
+        playerTorpedoCooldownSeconds,
+        PLAYER_TORPEDO_COOLDOWN_SECONDS,
+      );
+    }
     if (sceneActions.restart) {
       restartScenario({
         simulation,
@@ -1737,6 +1806,10 @@ export function mountPrototypeScene(
           disintegratorEngagementStates.clear();
           torpedoLockStates.clear();
           announcedDefensiveLockIds.clear();
+          playerTorpedoCooldownSeconds = 0;
+          queuedPlayerTorpedoClickTarget = null;
+          pendingPlayerTorpedoSalvo = null;
+          selectedPlayerTorpedoLockTargetId = null;
           for (const missile of missileVisuals) {
             simulation.removeBody(missile.id);
             world.removeChild(missile.sprite);
@@ -1774,6 +1847,10 @@ export function mountPrototypeScene(
       helionWeaponsBoostedEver = false;
       helionTargetsCleared = false;
       helionInterceptedTorpedoes = 0;
+      playerTorpedoCooldownSeconds = 0;
+      queuedPlayerTorpedoClickTarget = null;
+      pendingPlayerTorpedoSalvo = null;
+      selectedPlayerTorpedoLockTargetId = null;
       hasHandledCrash = false;
       crashSequenceElapsed = 0;
       autoRestartTimer = 0;
@@ -2042,6 +2119,11 @@ export function mountPrototypeScene(
           shipSystems,
           playerShieldState,
         );
+        applyCollisionEventsToDefenses(
+          collisionEvents,
+          missileVisuals,
+          defenseVisuals,
+        );
         syncBodyToNearestSystemRoot(interceptorBody, celestialVisuals);
         cleanupMissiles(simulation, missileVisuals, world);
       });
@@ -2143,6 +2225,10 @@ export function mountPrototypeScene(
               torpedoLockStates.clear();
               announcedDefensiveLockIds.clear();
               defensiveLockAlertSeconds = 0;
+              playerTorpedoCooldownSeconds = 0;
+              queuedPlayerTorpedoClickTarget = null;
+              pendingPlayerTorpedoSalvo = null;
+              selectedPlayerTorpedoLockTargetId = null;
               for (const missile of missileVisuals) {
                 simulation.removeBody(missile.id);
                 world.removeChild(missile.sprite);
@@ -2206,6 +2292,10 @@ export function mountPrototypeScene(
               torpedoLockStates.clear();
               announcedDefensiveLockIds.clear();
               defensiveLockAlertSeconds = 0;
+              playerTorpedoCooldownSeconds = 0;
+              queuedPlayerTorpedoClickTarget = null;
+              pendingPlayerTorpedoSalvo = null;
+              selectedPlayerTorpedoLockTargetId = null;
               for (const missile of missileVisuals) {
                 simulation.removeBody(missile.id);
                 world.removeChild(missile.sprite);
@@ -2243,6 +2333,10 @@ export function mountPrototypeScene(
         helionWeaponsBoostedEver = false;
         helionTargetsCleared = false;
         helionInterceptedTorpedoes = 0;
+        playerTorpedoCooldownSeconds = 0;
+        queuedPlayerTorpedoClickTarget = null;
+        pendingPlayerTorpedoSalvo = null;
+        selectedPlayerTorpedoLockTargetId = null;
         hasHandledCrash = false;
         crashSequenceElapsed = 0;
         autoRestartTimer = 0;
@@ -2605,15 +2699,21 @@ export function mountPrototypeScene(
     const visibleFuelStations = visibleContacts.filter((contact) =>
       isDefenseVisual(contact.visual) && contact.visual.config.weaponType === "station"
     );
-    const refuelBodies = celestialVisuals.filter((visual) => hasCelestialRefuelSource(visual.config));
-    const torpedoContacts = missileVisuals.map((missile) =>
-      classifyTorpedoScannerContact(
-        interceptorPosition,
-        missile,
-        celestialVisuals,
-        scannerRange,
-      ),
+    playerTorpedoCooldownSeconds = Math.max(
+      0,
+      playerTorpedoCooldownSeconds - ticker.deltaMS / 1000,
     );
+    const refuelBodies = celestialVisuals.filter((visual) => hasCelestialRefuelSource(visual.config));
+    const torpedoContacts = missileVisuals
+      .filter((missile) => (missile.sourceType ?? "defense") === "defense")
+      .map((missile) =>
+        classifyTorpedoScannerContact(
+          interceptorPosition,
+          missile,
+          celestialVisuals,
+          scannerRange,
+        ),
+      );
     updateTorpedoScannerLocks(
       torpedoLockStates,
       torpedoContacts,
@@ -2625,10 +2725,16 @@ export function mountPrototypeScene(
     const registeredTorpedoes = torpedoContacts.filter((contact) =>
       isRegisteredTorpedoContact(contact, torpedoLockStates),
     );
-    const registeredTorpedoIds = new Set(
+    const registeredEnemyTorpedoIds = new Set(
       registeredTorpedoes.map((contact) => contact.missile.id),
     );
-    updateMissileSprites(missileVisuals, registeredTorpedoIds);
+    const renderedMissileIds = new Set(registeredEnemyTorpedoIds);
+    for (const missile of missileVisuals) {
+      if ((missile.sourceType ?? "defense") === "player") {
+        renderedMissileIds.add(missile.id);
+      }
+    }
+    updateMissileSprites(missileVisuals, renderedMissileIds);
     let defensiveLockCueTriggered = false;
     const currentlyAcquiredDefensiveLocks = new Set<string>();
     for (const contact of registeredTorpedoes) {
@@ -2665,11 +2771,12 @@ export function mountPrototypeScene(
     );
     const activeIncomingTorpedoes = missileVisuals.filter(
       (missile) =>
+        (missile.sourceType ?? "defense") === "defense" &&
         missile.detonationElapsedSeconds === null &&
         missile.neutralizedElapsedSeconds === null,
     );
     const registeredIncomingTorpedoes = activeIncomingTorpedoes.filter((missile) =>
-      registeredTorpedoIds.has(missile.id),
+      registeredEnemyTorpedoIds.has(missile.id),
     );
     const registeredHostileDefenseIds = getRegisteredHostileDefenseIds(
       visibleDefenseContacts,
@@ -2690,7 +2797,7 @@ export function mountPrototypeScene(
       activeMarker: missionDisplayTarget,
       knownHostileDefenseIds: registeredHostileDefenseIds,
       likelyEnemyMarkers,
-      knownMissileIds: registeredTorpedoIds,
+      knownMissileIds: registeredEnemyTorpedoIds,
     });
     for (const visual of defenseVisuals) {
       visual.sprite.position.set(visual.body.position.x, visual.body.position.y);
@@ -2734,6 +2841,35 @@ export function mountPrototypeScene(
         contact.distance <= disintegratorRange
       );
     });
+    const torpedoLockedDefenseTargets = visibleDefenseContacts
+      .filter((contact) => {
+        const lockState = defenseLockStates.get(contact.visual.config.id);
+        return (
+          lockState !== undefined &&
+          lockState.progress >= COMBAT_BALANCE.defenses.disintegratorLockThreshold &&
+          contact.distance <= scannerRange
+        );
+      })
+      .sort((a, b) =>
+        a.distance === b.distance
+          ? a.visual.config.id.localeCompare(b.visual.config.id)
+          : a.distance - b.distance,
+      );
+    selectedPlayerTorpedoLockTargetId = resolveSelectedTorpedoLockTargetId({
+      availableTargets: torpedoLockedDefenseTargets,
+      selectedTargetId: selectedPlayerTorpedoLockTargetId,
+      cycleRequested: sceneActions.cycleTorpedoLock && !gameplayInputBlocked && !isCrashed,
+    });
+    const selectedTorpedoLockTarget = selectedPlayerTorpedoLockTargetId
+      ? torpedoLockedDefenseTargets.find(
+          (contact) => contact.visual.config.id === selectedPlayerTorpedoLockTargetId,
+        ) ?? null
+      : null;
+    const selectedTorpedoLockIndex = selectedTorpedoLockTarget
+      ? torpedoLockedDefenseTargets.findIndex(
+          (contact) => contact.visual.config.id === selectedTorpedoLockTarget.visual.config.id,
+        ) + 1
+      : 0;
     const lockedDisruptorTargets = visibleDefenseContacts.filter((contact) => {
       const lockState = defenseLockStates.get(contact.visual.config.id);
       return (
@@ -2788,6 +2924,74 @@ export function mountPrototypeScene(
       weaponMode === "disintegrator"
         ? (weaponArmed ? eligibleDisintegratorTargets : [])
         : (weaponArmed ? eligibleDisruptorTargets : []);
+    if (
+      playerRequestedTorpedoFire &&
+      playerTorpedoCooldownSeconds <= 0 &&
+      pendingPlayerTorpedoSalvo === null
+    ) {
+      const fireResult = firePlayerTorpedo({
+        simulation,
+        world,
+        shipSystems,
+        interceptorBody,
+        targetContacts: torpedoLockedDefenseTargets,
+        selectedTargetId: selectedPlayerTorpedoLockTargetId,
+        missileVisuals,
+        nextMissileIdRef,
+        elapsedSeconds,
+        travelHeading: stableMotionHeading,
+        clickTargetPosition: null,
+      });
+      if (fireResult.fired) {
+        playerTorpedoCooldownSeconds = PLAYER_TORPEDO_COOLDOWN_SECONDS;
+      }
+    }
+    if (
+      pendingPlayerTorpedoSalvo &&
+      !pauseActive &&
+      !isCrashed &&
+      !gameplayInputBlocked &&
+      weaponArmed
+    ) {
+      let launchesThisFrame = 0;
+      while (
+        pendingPlayerTorpedoSalvo &&
+        pendingPlayerTorpedoSalvo.shotsRemaining > 0 &&
+        pendingPlayerTorpedoSalvo.nextLaunchAtSeconds <= elapsedSeconds &&
+        launchesThisFrame < PLAYER_TORPEDO_SALVO_COUNT
+      ) {
+        const fireResult = firePlayerTorpedo({
+          simulation,
+          world,
+          shipSystems,
+          interceptorBody,
+          targetContacts: torpedoLockedDefenseTargets,
+          selectedTargetId: selectedPlayerTorpedoLockTargetId,
+          missileVisuals,
+          nextMissileIdRef,
+          elapsedSeconds,
+          travelHeading: stableMotionHeading,
+          clickTargetPosition: pendingPlayerTorpedoSalvo.clickTargetPosition,
+        });
+        if (!fireResult.fired) {
+          pendingPlayerTorpedoSalvo = null;
+          break;
+        }
+
+        launchesThisFrame += 1;
+        pendingPlayerTorpedoSalvo.shotsRemaining -= 1;
+        if (pendingPlayerTorpedoSalvo.shotsRemaining <= 0) {
+          pendingPlayerTorpedoSalvo = null;
+          playerTorpedoCooldownSeconds = Math.max(
+            playerTorpedoCooldownSeconds,
+            PLAYER_TORPEDO_COOLDOWN_SECONDS,
+          );
+        } else {
+          pendingPlayerTorpedoSalvo.nextLaunchAtSeconds +=
+            PLAYER_TORPEDO_SALVO_INTERVAL_SECONDS;
+        }
+      }
+    }
     updateDisintegratorEngagementStates(
       disintegratorEngagementStates,
       activeWeaponTargets,
@@ -2983,6 +3187,7 @@ export function mountPrototypeScene(
         defenseLockOverlay,
         defenseLockStates,
         visibleDefenseContacts,
+        selectedPlayerTorpedoLockTargetId,
       );
     } else {
       defenseLockOverlay.clear();
@@ -3286,6 +3491,22 @@ export function mountPrototypeScene(
     );
     const enemyLockWarningActive =
       strongestEnemyLock !== null || registeredIncomingTorpedoes.length > 0;
+    const collisionWarning = resolveCollisionWarning(
+      isCrashed ? null : {
+        x: interceptorPosition.x,
+        y: interceptorPosition.y,
+        vx: interceptorBody.velocity.x,
+        vy: interceptorBody.velocity.y,
+      },
+      celestialVisuals.map((v) => ({
+        name: v.config.name,
+        x: v.body.position.x,
+        y: v.body.position.y,
+        vx: v.body.velocity.x,
+        vy: v.body.velocity.y,
+        radius: v.body.radius,
+      })),
+    );
     activeWarnings = updateGameWarningManager(warningManager, [
       {
         id: "tutorial-complete",
@@ -3337,6 +3558,22 @@ export function mountPrototypeScene(
         accentColor: "#ff8a6a",
         priority: WARNING_PRIORITIES.navSolutionUnstable,
         active: navigationWarning !== null,
+      },
+      {
+        id: "collision-imminent",
+        title: "COLLISION IMMINENT",
+        message: collisionWarning?.id === "collision-imminent" ? collisionWarning.message : "",
+        accentColor: "#ff7b72",
+        priority: 290,
+        active: collisionWarning?.id === "collision-imminent",
+      },
+      {
+        id: "collision-warning",
+        title: "IMPACT TRAJECTORY",
+        message: collisionWarning?.id === "collision-warning" ? collisionWarning.message : "",
+        accentColor: "#ffbd59",
+        priority: 210,
+        active: collisionWarning?.id === "collision-warning",
       },
     ], elapsedSeconds);
     const scannerStatus =
@@ -3400,6 +3637,14 @@ export function mountPrototypeScene(
           const lockFraction = defense.launcherState
             ? defense.launcherState.lockProgress / defense.defense.config.lockOnSeconds
             : 0;
+          if (
+            defense.defense.config.weaponType === "torpedo" &&
+            lockFraction >= 1 &&
+            defense.launcherState &&
+            !defense.launcherState.hasAvailableCourse
+          ) {
+            return `${defense.defense.config.name}: lock held, waiting for torpedo course`;
+          }
           return lockFraction >= 1
             ? `${defense.defense.config.name}: torpedo away`
             : `${defense.defense.config.name}: lock ${(lockFraction * 100).toFixed(0)}%`;
@@ -3479,6 +3724,13 @@ export function mountPrototypeScene(
                 .join(" | ")
             : "No torpedo locks"}`
         : null,
+      hudConfig.telemetry.disintegratorLocks
+        ? `Torpedo target: ${selectedTorpedoLockTarget
+            ? `${selectedTorpedoLockTarget.visual.config.name} (${selectedTorpedoLockIndex}/${torpedoLockedDefenseTargets.length})`
+            : torpedoLockedDefenseTargets.length > 0
+              ? `${torpedoLockedDefenseTargets.length} lock(s) available`
+              : "No torpedo lock"}`
+        : null,
       hudConfig.telemetry.subsystemFocus ? `Boosted: ${shipSystems.boosted}` : null,
       hudConfig.telemetry.subsystemStatus
         ? formatSubsystemLine("ENG", shipSystems.engines, getEngineThrustMultiplier(shipSystems))
@@ -3526,7 +3778,7 @@ export function mountPrototypeScene(
         ? "Systems: 1 engines, 2 scanners, 3 weapons, 4 defenses"
         : null,
       hudConfig.telemetry.utility
-        ? `Utility: H HUD, \` debug, F arm weapon, G switch weapon, M tactical view, Esc menu, R restart${missionPauseActive ? ", Enter continue" : ""}`
+        ? `Utility: H HUD, \` debug, F arm weapon, G switch weapon, Tab cycle torpedo lock, X fire torpedo, Left click torpedo salvo, M tactical view, Esc menu, R restart${missionPauseActive ? ", Enter continue" : ""}`
         : null,
     ].filter((line): line is string => line !== null);
     const audioCueIds: string[] = [];
@@ -3575,6 +3827,7 @@ export function mountPrototypeScene(
       app.ticker.remove(tickScene);
       unsubscribeSceneEvents();
       keyTracker.detach(window);
+      app.canvas.removeEventListener("pointerdown", handleCanvasPointerDown);
       sceneRoot.destroy({
         children: true,
       });
@@ -3617,14 +3870,16 @@ function buildCombatTargetSnapshot(options: {
       (visual): visual is DefenseVisual =>
         isDefenseVisual(visual) && visual.config.weaponType === "station",
     );
-  const torpedoContacts = options.missileVisuals.map((missile) =>
-    classifyTorpedoScannerContact(
-      options.interceptorPosition,
-      missile,
-      options.celestialVisuals,
-      options.scannerRange,
-    ),
-  );
+  const torpedoContacts = options.missileVisuals
+    .filter((missile) => (missile.sourceType ?? "defense") === "defense")
+    .map((missile) =>
+      classifyTorpedoScannerContact(
+        options.interceptorPosition,
+        missile,
+        options.celestialVisuals,
+        options.scannerRange,
+      ),
+    );
   const visibleTorpedoes = torpedoContacts.filter((contact) => contact.visible);
   const lockedDisintegratorTargets = visibleTorpedoes.filter((contact) => {
     const lockState = options.torpedoLockStates.get(contact.missile.id);
@@ -3717,14 +3972,16 @@ function resolvePreStepLockedTorpedoDefense(options: {
     return 0;
   }
 
-  const torpedoContacts = options.missileVisuals.map((missile) =>
-    classifyTorpedoScannerContact(
-      options.interceptorPosition,
-      missile,
-      options.celestialVisuals,
-      options.scannerRange,
-    ),
-  );
+  const torpedoContacts = options.missileVisuals
+    .filter((missile) => (missile.sourceType ?? "defense") === "defense")
+    .map((missile) =>
+      classifyTorpedoScannerContact(
+        options.interceptorPosition,
+        missile,
+        options.celestialVisuals,
+        options.scannerRange,
+      ),
+    );
   const registeredTorpedoes = torpedoContacts.filter((contact) => {
     const sourceDefenseLock =
       options.defenseLockStates.get(contact.missile.sourceId)?.progress ?? 0;
@@ -3778,6 +4035,174 @@ function resolvePreStepLockedTorpedoDefense(options: {
   return preStepResult.neutralizedTorpedoCount;
 }
 
+function resolveSelectedTorpedoLockTargetId(options: {
+  availableTargets: ReadonlyArray<ScannerContact & { visual: DefenseVisual }>;
+  selectedTargetId: string | null;
+  cycleRequested: boolean;
+}): string | null {
+  if (options.availableTargets.length === 0) {
+    return null;
+  }
+
+  const availableIds = options.availableTargets.map((contact) => contact.visual.config.id);
+
+  if (options.cycleRequested) {
+    if (!options.selectedTargetId) {
+      return availableIds[0] ?? null;
+    }
+    const currentIndex = availableIds.indexOf(options.selectedTargetId);
+    if (currentIndex < 0) {
+      return availableIds[0] ?? null;
+    }
+    return availableIds[(currentIndex + 1) % availableIds.length] ?? null;
+  }
+
+  if (
+    options.selectedTargetId &&
+    availableIds.includes(options.selectedTargetId)
+  ) {
+    return options.selectedTargetId;
+  }
+
+  return availableIds[0] ?? null;
+}
+
+function firePlayerTorpedo(options: {
+  simulation: OrbitalWorld;
+  world: Container;
+  shipSystems: ShipSystemsState;
+  interceptorBody: OrbitalBodyState;
+  targetContacts: ReadonlyArray<ScannerContact & { visual: DefenseVisual }>;
+  selectedTargetId: string | null;
+  missileVisuals: MissileVisual[];
+  nextMissileIdRef: { value: number };
+  elapsedSeconds: number;
+  travelHeading: number;
+  clickTargetPosition: Vector2Like | null;
+}): { fired: boolean } {
+  const availableTargets = options.targetContacts.filter(
+    (contact) => !contact.visual.destroyed,
+  );
+  const targetContact = options.clickTargetPosition
+    ? null
+    : options.selectedTargetId
+      ? availableTargets.find(
+          (contact) => contact.visual.config.id === options.selectedTargetId,
+        ) ?? availableTargets[0]
+      : availableTargets[0];
+  const targetPosition = options.clickTargetPosition
+    ? {
+        x: options.clickTargetPosition.x,
+        y: options.clickTargetPosition.y,
+      }
+    : targetContact
+      ? {
+          x: targetContact.visual.body.position.x,
+          y: targetContact.visual.body.position.y,
+        }
+      : null;
+  if (!targetPosition || !options.interceptorBody.propulsion) {
+    return { fired: false };
+  }
+
+  const weaponChargeCost =
+    PLAYER_TORPEDO_WEAPON_CHARGE_COST *
+    getWeaponEnergyCostMultiplier(options.shipSystems);
+  if (options.shipSystems.weapons.charge < weaponChargeCost) {
+    return { fired: false };
+  }
+
+  const targetOffset = {
+    x: targetPosition.x - options.interceptorBody.position.x,
+    y: targetPosition.y - options.interceptorBody.position.y,
+  };
+  const launchHeading = Math.hypot(targetOffset.x, targetOffset.y) > 0.01
+    ? Math.atan2(targetOffset.y, targetOffset.x)
+    : options.travelHeading;
+
+  options.shipSystems.weapons.charge = Math.max(
+    0,
+    options.shipSystems.weapons.charge - weaponChargeCost,
+  );
+  const missileId = `player:torpedo:${options.nextMissileIdRef.value}`;
+  options.nextMissileIdRef.value += 1;
+  const launchDirection = {
+    x: Math.cos(launchHeading),
+    y: Math.sin(launchHeading),
+  };
+  const launchPosition = {
+    x: options.interceptorBody.position.x +
+      launchDirection.x * (options.interceptorBody.radius + 18),
+    y: options.interceptorBody.position.y +
+      launchDirection.y * (options.interceptorBody.radius + 18),
+  };
+  const missileBody = options.simulation.addBody({
+    id: missileId,
+    mass: 0.18,
+    radius: 8,
+    collisionRadius: 16,
+    systemId: options.interceptorBody.systemId,
+    affectsGravity: false,
+    receivesGravity: false,
+    collisionExclusions: [options.interceptorBody.id],
+    position: launchPosition,
+    velocity: {
+      x: options.interceptorBody.velocity.x +
+        launchDirection.x * PLAYER_TORPEDO_LAUNCH_SPEED,
+      y: options.interceptorBody.velocity.y +
+        launchDirection.y * PLAYER_TORPEDO_LAUNCH_SPEED,
+    },
+    propulsion: {
+      heading: launchHeading,
+      throttle: 1,
+      maxThrust: PLAYER_TORPEDO_THRUST,
+    },
+  });
+  const sprite = new Graphics()
+    .poly([0, -16, 8, 9, 0, 4, -8, 9])
+    .fill(0x9cd3ff)
+    .stroke({ color: 0xe8f7ff, width: 2, alpha: 0.95 });
+  options.world.addChild(sprite);
+  const missileInitialSpeed = Math.max(
+    1,
+    Math.hypot(
+      missileBody.velocity.x,
+      missileBody.velocity.y,
+    ),
+  );
+  const estimatedTravelSeconds = Math.max(
+    0.1,
+    distanceBetween(launchPosition, targetPosition) / missileInitialSpeed,
+  );
+  options.missileVisuals.push({
+    id: missileId,
+    body: missileBody,
+    sprite,
+    sourceId: options.interceptorBody.id,
+    sourceType: "player",
+    targetId: targetContact?.visual.config.id,
+    turnRate: PLAYER_TORPEDO_TURN_RATE,
+    lifetimeSeconds: 18,
+    interceptSolution: {
+      interceptPoint: {
+        x: targetPosition.x,
+        y: targetPosition.y,
+      },
+      timeToInterceptSeconds: estimatedTravelSeconds,
+      sampleTimeSeconds: options.elapsedSeconds + estimatedTravelSeconds,
+      confidence: "fallback",
+    },
+    detonationElapsedSeconds: null,
+    neutralizedElapsedSeconds: null,
+    detonationPosition: null,
+    disintegratorEnergyAbsorbed: 0,
+    lostTrackSeconds: 0,
+    splashApplied: false,
+  });
+
+  return { fired: true };
+}
+
 function getPlayerWeaponLabel(mode: PlayerWeaponMode): string {
   return mode === "disintegrator" ? "Disintegrator Beam" : "Disruptor";
 }
@@ -3792,6 +4217,19 @@ function getPlayerWeaponAccentColor(mode: PlayerWeaponMode): number {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
+}
+
+function convertScreenPointToWorldPoint(
+  screenPoint: Vector2Like,
+  screenCenter: Vector2Like,
+  cameraCenter: Vector2Like,
+  cameraZoom: number,
+): Vector2Like {
+  const safeZoom = Math.max(0.0001, cameraZoom);
+  return {
+    x: cameraCenter.x + (screenPoint.x - screenCenter.x) / safeZoom,
+    y: cameraCenter.y + (screenPoint.y - screenCenter.y) / safeZoom,
+  };
 }
 
 function restartScenario(options: {

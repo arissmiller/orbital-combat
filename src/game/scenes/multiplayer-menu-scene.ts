@@ -2,24 +2,45 @@ import {
   resetGameMenuState,
   setGameMenuState,
   type MenuActionState,
+  type MenuCardState,
 } from "../../ui/game-menu-store";
 import {
-  BrowserMultiplayerClient,
   createDefaultMultiplayerServerUrl,
+  type BrowserMultiplayerClient,
   type MultiplayerClientState,
 } from "../network/browser-multiplayer-client";
+import {
+  consumeShouldAutoJoinRunningRoom,
+  disconnectMultiplayerClient,
+  getOrCreateMultiplayerClient,
+} from "../network/multiplayer-session";
 import type { SceneContext, SceneHandle } from "./scene-manager";
 
 const MULTIPLAYER_NAME_KEY = "orbital-combat.multiplayer.display-name";
 const MULTIPLAYER_SERVER_URL_KEY = "orbital-combat.multiplayer.server-url";
 
 export function mountMultiplayerMenuScene(context: SceneContext): SceneHandle {
-  const client = new BrowserMultiplayerClient({
-    serverUrl:
-      readStoredValue(MULTIPLAYER_SERVER_URL_KEY)
-      ?? createDefaultMultiplayerServerUrl(),
+  const defaultServerUrl = createDefaultMultiplayerServerUrl();
+  const storedServerUrl = readStoredValue(MULTIPLAYER_SERVER_URL_KEY);
+  const initialServerUrl = resolveInitialServerUrl(
+    storedServerUrl,
+    defaultServerUrl,
+  );
+  if (storedServerUrl !== null && storedServerUrl !== initialServerUrl) {
+    writeStoredValue(MULTIPLAYER_SERVER_URL_KEY, initialServerUrl);
+  }
+
+  const client = getOrCreateMultiplayerClient({
+    serverUrl: initialServerUrl,
     displayName: readStoredValue(MULTIPLAYER_NAME_KEY) ?? "Pilot",
   });
+  const allowAutoJoinRunningRoom = consumeShouldAutoJoinRunningRoom();
+  const initialRoom = client.getState().room;
+  let suppressedRunningRoomCode =
+    !allowAutoJoinRunningRoom && initialRoom?.status === "running"
+      ? initialRoom.code
+      : null;
+  let loadingMatchScene = false;
 
   const promptDisplayName = (): void => {
     if (typeof window === "undefined") {
@@ -94,13 +115,28 @@ export function mountMultiplayerMenuScene(context: SceneContext): SceneHandle {
 
   const syncMenu = (): void => {
     const state = client.getState();
+    if (suppressedRunningRoomCode && state.room?.code !== suppressedRunningRoomCode) {
+      suppressedRunningRoomCode = null;
+    }
+    if (
+      (allowAutoJoinRunningRoom || suppressedRunningRoomCode === null)
+      && !loadingMatchScene
+      && state.room?.status === "running"
+    ) {
+      loadingMatchScene = true;
+      context.load("multiplayer-match");
+      return;
+    }
+
+    const lobbyBrowserMode =
+      state.connectionStatus === "connected" && !state.room;
     setGameMenuState({
       visible: true,
       title: "Multiplayer",
       subtitle: buildSubtitle(state),
       description: buildDescription(state),
       accentColor: "#ffb07f",
-      layout: "stack",
+      layout: lobbyBrowserMode ? "cards" : "stack",
       actions: buildActions(
         state,
         client,
@@ -109,12 +145,15 @@ export function mountMultiplayerMenuScene(context: SceneContext): SceneHandle {
         promptCreateRoom,
         promptJoinRoom,
       ),
-      cards: [],
+      cards: buildCards(state, client, promptCreateRoom, promptJoinRoom),
       footerActions: [
         {
           label: "Back",
           accentColor: "#8ee8ff",
-          onSelect: () => context.load("main-menu"),
+          onSelect: () => {
+            disconnectMultiplayerClient("Left multiplayer.");
+            context.load("main-menu");
+          },
         },
       ],
     });
@@ -122,11 +161,13 @@ export function mountMultiplayerMenuScene(context: SceneContext): SceneHandle {
 
   const unsubscribe = client.subscribe(syncMenu);
   syncMenu();
+  if (client.getState().connectionStatus === "disconnected") {
+    client.connect();
+  }
 
   return {
     dispose() {
       unsubscribe();
-      client.disconnect("Left multiplayer menu.");
       resetGameMenuState();
     },
   };
@@ -187,19 +228,29 @@ function buildActions(
   if (!room) {
     return [
       {
-        label: "Create Room",
+        label: "Create",
         accentColor: "#ffb07f",
         onSelect: promptCreateRoom,
       },
       {
-        label: "Join Room",
+        label: "Refresh",
         accentColor: "#8ee8ff",
+        onSelect: () => client.requestRoomList(),
+      },
+      {
+        label: "Join by Code",
+        accentColor: "#7fe7d0",
         onSelect: promptJoinRoom,
       },
       {
         label: "Set Display Name",
         accentColor: "#ffd173",
         onSelect: promptDisplayName,
+      },
+      {
+        label: "Set Server URL",
+        accentColor: "#c1a5ff",
+        onSelect: promptServerUrl,
       },
       {
         label: "Disconnect",
@@ -255,11 +306,88 @@ function buildSubtitle(state: MultiplayerClientState): string {
     return "Connecting to multiplayer server...";
   }
   if (!state.room) {
-    return "Connected. Create a room or join an existing room code.";
+    return `Connected. ${state.availableRooms.length} joinable room${state.availableRooms.length === 1 ? "" : "s"} available.`;
   }
 
   const readyCount = state.room.players.filter((player) => player.ready).length;
-  return `Room ${state.room.code} | ${state.room.status.toUpperCase()} | Players ${state.room.players.length}/${state.room.maxPlayers} | Ready ${readyCount}/${state.room.players.length}`;
+  const mapSuffix = state.room.map ? ` | Map ${state.room.map.name}` : "";
+  return `Room ${state.room.code} | ${state.room.status.toUpperCase()} | Players ${state.room.players.length}/${state.room.maxPlayers} | Ready ${readyCount}/${state.room.players.length}${mapSuffix}`;
+}
+
+function buildCards(
+  state: MultiplayerClientState,
+  client: BrowserMultiplayerClient,
+  promptCreateRoom: () => void,
+  promptJoinRoom: () => void,
+): MenuCardState[] {
+  if (state.connectionStatus !== "connected" || state.room) {
+    return [];
+  }
+
+  const cards: MenuCardState[] = [
+    {
+      key: "create-room",
+      eyebrow: "HOST",
+      title: "Create Room",
+      description:
+        "Open a new room on Caldera Twin-Moon Arena. Default room size is 4 pilots (configurable).",
+      accentColor: "#ffb07f",
+      action: {
+        label: "Create",
+        accentColor: "#ffb07f",
+        onSelect: promptCreateRoom,
+      },
+    },
+  ];
+
+  if (state.availableRooms.length === 0) {
+    cards.push({
+      key: "empty-room-list",
+      eyebrow: "BROWSE",
+      title: "No Joinable Rooms",
+      description: "No open rooms are joinable right now. Create one or refresh the list.",
+      accentColor: "#8ee8ff",
+      action: {
+        label: "Refresh",
+        accentColor: "#8ee8ff",
+        onSelect: () => client.requestRoomList(),
+      },
+    });
+  } else {
+    for (const room of state.availableRooms) {
+      const mapName = room.map?.name ?? "Unknown map";
+      const isRunning = room.status === "running";
+      cards.push({
+        key: `room-${room.code}`,
+        eyebrow: isRunning ? "DROP IN" : "JOIN",
+        title: `Room ${room.code}`,
+        description:
+          `${room.status.toUpperCase()} | ${room.playerCount}/${room.maxPlayers} pilots | Host ${room.hostDisplayName}`
+          + ` | ${mapName}`,
+        accentColor: isRunning ? "#8ee8ff" : "#7fe7d0",
+        action: {
+          label: isRunning ? "Drop In" : "Join Room",
+          accentColor: isRunning ? "#8ee8ff" : "#7fe7d0",
+          onSelect: () => client.joinRoom(room.code),
+        },
+      });
+    }
+  }
+
+  cards.push({
+    key: "join-by-code",
+    eyebrow: "DIRECT",
+    title: "Join by Code",
+    description: "Enter a 6-character room code to join directly.",
+    accentColor: "#ffd173",
+    action: {
+      label: "Enter Code",
+      accentColor: "#ffd173",
+      onSelect: promptJoinRoom,
+    },
+  });
+
+  return cards;
 }
 
 function buildDescription(state: MultiplayerClientState): string {
@@ -280,11 +408,30 @@ function buildDescription(state: MultiplayerClientState): string {
       })
       .join(", ");
     parts.push(`Roster ${roster}`);
+    if (state.room.map) {
+      parts.push(
+        `Map ${state.room.map.name} (${state.room.map.celestialBodyCount} bodies)`,
+      );
+    }
+  } else if (state.connectionStatus === "connected") {
+    if (state.availableRooms.length === 0) {
+      parts.push("Available rooms: none");
+    } else {
+      const labels = state.availableRooms
+        .slice(0, 4)
+        .map((room) =>
+          `${room.code} ${room.status === "running" ? "[LIVE]" : "[LOBBY]"} (${room.playerCount}/${room.maxPlayers})`
+        )
+        .join(", ");
+      parts.push(`Available rooms: ${labels}`);
+    }
   }
 
   if (state.latestSnapshot) {
+    const celestialCount = state.latestSnapshot.celestialBodies?.length ?? 0;
+    const mapId = state.latestSnapshot.mapId ? ` on ${state.latestSnapshot.mapId}` : "";
     parts.push(
-      `Snapshot tick ${state.latestSnapshot.tick} (${state.latestSnapshot.players.length} entities)`,
+      `Snapshot tick ${state.latestSnapshot.tick}${mapId} (${state.latestSnapshot.players.length} players, ${celestialCount} celestial bodies)`,
     );
   }
 
@@ -321,4 +468,50 @@ function writeStoredValue(key: string, value: string): void {
   } catch {
     // Ignore storage failures in private browsing or restrictive environments.
   }
+}
+
+function resolveInitialServerUrl(storedValue: string | null, fallback: string): string {
+  const stored = storedValue?.trim();
+  if (!stored) {
+    return fallback;
+  }
+  if (isLegacyRailwayPortUrl(stored)) {
+    return fallback;
+  }
+  return stored;
+}
+
+function isLegacyRailwayPortUrl(url: string): boolean {
+  if (typeof window === "undefined") {
+    return false;
+  }
+  const currentHostname = window.location.hostname || "";
+  if (isLocalhostHostname(currentHostname)) {
+    return false;
+  }
+
+  try {
+    const parsed = new URL(url);
+    if (isLocalhostHostname(parsed.hostname)) {
+      return true;
+    }
+    const expectedProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+    return (
+      parsed.protocol === expectedProtocol
+      && parsed.hostname === currentHostname
+      && parsed.port === "8787"
+      && parsed.pathname === "/ws"
+    );
+  } catch {
+    return false;
+  }
+}
+
+function isLocalhostHostname(hostname: string): boolean {
+  return (
+    hostname === "localhost"
+    || hostname === "127.0.0.1"
+    || hostname === "0.0.0.0"
+    || hostname === "::1"
+  );
 }

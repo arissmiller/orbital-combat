@@ -1,6 +1,9 @@
 export class KeyTracker {
   private readonly pressed = new Set<string>();
   private readonly onKeyDown = (event: KeyboardEvent) => {
+    if (event.code === "Tab") {
+      event.preventDefault();
+    }
     this.pressed.add(event.code);
   };
   private readonly onKeyUp = (event: KeyboardEvent) => {

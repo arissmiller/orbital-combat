@@ -56,7 +56,7 @@ export const SHIP_SYSTEMS_BALANCE: ShipSystemsBalance = {
   },
   scanners: {
     rangeMultiplier: 1.5,
-    lockMultiplier: 3.75,
+    lockMultiplier: 6,
     instantDefenseDisintegratorLocks: true,
   },
 };

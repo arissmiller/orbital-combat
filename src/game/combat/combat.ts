@@ -24,6 +24,9 @@ export interface MissileVisual {
   body: OrbitalBodyState;
   sprite: Graphics;
   sourceId: string;
+  sourceType?: "defense" | "player";
+  targetId?: string;
+  turnRate?: number;
   lifetimeSeconds: number;
   interceptSolution: InterceptSolution | null;
   detonationElapsedSeconds: number | null;
@@ -47,6 +50,9 @@ export interface LauncherState {
   lockProgress: number;
   hasDetection: boolean;
   detectedOccluderId: string | null;
+  lockedTargetId: string | null;
+  hasAvailableCourse: boolean;
+  launchHeading: number | null;
   interceptSolution: InterceptSolution | null;
   beamEngagement: number;
   firing: boolean;
@@ -111,6 +117,9 @@ export function createLauncherState(): LauncherState {
     lockProgress: 0,
     hasDetection: false,
     detectedOccluderId: null,
+    lockedTargetId: null,
+    hasAvailableCourse: false,
+    launchHeading: null,
     interceptSolution: null,
     beamEngagement: 0,
     firing: false,
@@ -134,6 +143,9 @@ function isPassiveDefenseWeaponType(
 ): boolean {
   return weaponType === "station" || weaponType === "target";
 }
+
+const PLAYER_TORPEDO_LOCK_CORRIDOR_PADDING = 42;
+const PLAYER_TORPEDO_LOCK_MAX_FORWARD_DISTANCE = 2400;
 
 export function detonateMissile(missile: MissileVisual): void {
   missile.detonationElapsedSeconds = 0;
@@ -230,25 +242,72 @@ export function updateLauncherMissiles(options: {
       continue;
     }
 
+    if (missile.lifetimeSeconds <= 0) {
+      detonateMissile(missile);
+      continue;
+    }
+
+    const sourceType = missile.sourceType ?? "defense";
     const sourceDefense = defenseById.get(missile.sourceId);
-    const interceptSolution = sourceDefense
-      ? findInterceptFromForecast({
-          forecast: options.targetForecast,
-          startTimeSeconds: options.elapsedSeconds,
-          sourcePosition: missile.body.position,
-          interceptorSpeed: Math.hypot(
-            missile.body.velocity.x,
-            missile.body.velocity.y,
-          ),
-          interceptorAcceleration: getTorpedoAcceleration(sourceDefense.config),
-          toleranceMultiplier: 1.18,
-        })
-      : null;
-    if (interceptSolution?.confidence === "predicted") {
-      missile.interceptSolution = interceptSolution;
-      missile.lostTrackSeconds = 0;
+    let targetPosition: Vector2Like = options.interceptorBody.position;
+
+    if (sourceType === "defense") {
+      const interceptSolution = sourceDefense
+        ? findInterceptFromForecast({
+            forecast: options.targetForecast,
+            startTimeSeconds: options.elapsedSeconds,
+            sourcePosition: missile.body.position,
+            interceptorSpeed: Math.hypot(
+              missile.body.velocity.x,
+              missile.body.velocity.y,
+            ),
+            interceptorAcceleration: getTorpedoAcceleration(sourceDefense.config),
+            toleranceMultiplier: 1.18,
+          })
+        : null;
+      if (interceptSolution?.confidence === "predicted") {
+        missile.interceptSolution = interceptSolution;
+        missile.lostTrackSeconds = 0;
+      } else {
+        missile.lostTrackSeconds += options.stepSeconds;
+      }
+      targetPosition = options.interceptorBody.position;
     } else {
-      missile.lostTrackSeconds += options.stepSeconds;
+      const currentTarget = missile.targetId
+        ? defenseById.get(missile.targetId) ?? null
+        : null;
+      const activeTarget = currentTarget &&
+          !currentTarget.destroyed &&
+          currentTarget.config.weaponType !== "station"
+        ? currentTarget
+        : findPlayerTorpedoLockTarget(missile, options.defenseVisuals);
+      if (activeTarget) {
+        missile.targetId = activeTarget.config.id;
+        targetPosition = activeTarget.body.position;
+      } else {
+        missile.targetId = undefined;
+        targetPosition = missile.interceptSolution?.interceptPoint ?? {
+          x: missile.body.position.x + Math.cos(missile.body.propulsion.heading) * 180,
+          y: missile.body.position.y + Math.sin(missile.body.propulsion.heading) * 180,
+        };
+      }
+
+      const distanceToTarget = distanceBetween(missile.body.position, targetPosition);
+      const missileSpeed = Math.max(
+        0.001,
+        Math.hypot(missile.body.velocity.x, missile.body.velocity.y),
+      );
+      const timeToTarget = distanceToTarget / missileSpeed;
+      missile.interceptSolution = {
+        interceptPoint: {
+          x: targetPosition.x,
+          y: targetPosition.y,
+        },
+        timeToInterceptSeconds: timeToTarget,
+        sampleTimeSeconds: options.elapsedSeconds + timeToTarget,
+        confidence: "fallback",
+      };
+      missile.lostTrackSeconds = activeTarget ? 0 : missile.lostTrackSeconds + options.stepSeconds;
     }
 
     const plannedInterceptTime = missile.interceptSolution?.sampleTimeSeconds ?? null;
@@ -261,29 +320,31 @@ export function updateLauncherMissiles(options: {
     }
 
     const desiredHeading = Math.atan2(
-      (missile.interceptSolution?.interceptPoint.y ?? options.interceptorBody.position.y) - missile.body.position.y,
-      (missile.interceptSolution?.interceptPoint.x ?? options.interceptorBody.position.x) - missile.body.position.x,
+      (missile.interceptSolution?.interceptPoint.y ?? targetPosition.y) - missile.body.position.y,
+      (missile.interceptSolution?.interceptPoint.x ?? targetPosition.x) - missile.body.position.x,
     );
     if (
       hasMissileOvershotTarget(
         missile.body.position,
         missile.body.velocity,
-        options.interceptorBody.position,
+        missile.interceptSolution?.interceptPoint ?? targetPosition,
       )
     ) {
       detonateMissile(missile);
-      tryApplyMissileSplashDamageToShip(
-        missile,
-        options.interceptorBody,
-        options.shipSystems,
-        options.playerShieldState,
-      );
+      if (sourceType === "defense") {
+        tryApplyMissileSplashDamageToShip(
+          missile,
+          options.interceptorBody,
+          options.shipSystems,
+          options.playerShieldState,
+        );
+      }
       continue;
     }
     missile.body.propulsion.heading = rotateTowardAngle(
       missile.body.propulsion.heading,
       desiredHeading,
-      (sourceDefense?.config.torpedoTurnRate ?? 3.6) * options.stepSeconds,
+      (missile.turnRate ?? sourceDefense?.config.torpedoTurnRate ?? 3.6) * options.stepSeconds,
     );
     missile.body.propulsion.throttle = 1;
   }
@@ -344,6 +405,9 @@ export function updateLauncherMissiles(options: {
 
     launcherState.hasDetection = hasDetection;
     launcherState.detectedOccluderId = occluder?.config.id ?? null;
+    launcherState.lockedTargetId = hasDetection ? options.interceptorBody.id : null;
+    launcherState.hasAvailableCourse = defense.config.weaponType !== "torpedo";
+    launcherState.launchHeading = null;
     launcherState.firing = false;
     const lockSolution = hasDetection
       ? findInterceptFromForecast({
@@ -354,8 +418,24 @@ export function updateLauncherMissiles(options: {
           interceptorAcceleration: getTorpedoAcceleration(defense.config),
         }) ?? null
       : null;
-    launcherState.interceptSolution =
+    const predictedLockSolution =
       lockSolution?.confidence === "predicted" ? lockSolution : null;
+    const torpedoCourse =
+      defense.config.weaponType === "torpedo" && predictedLockSolution
+        ? resolveTorpedoLaunchCourse({
+            defense,
+            targetForecast: options.targetForecast,
+            elapsedSeconds: options.elapsedSeconds,
+            fallbackInterceptSolution: predictedLockSolution,
+          })
+        : null;
+    if (defense.config.weaponType === "torpedo") {
+      launcherState.hasAvailableCourse = torpedoCourse?.available ?? false;
+      launcherState.launchHeading = torpedoCourse?.launchHeading ?? null;
+      launcherState.interceptSolution = torpedoCourse?.interceptSolution ?? null;
+    } else {
+      launcherState.interceptSolution = predictedLockSolution;
+    }
 
     if (!hasDetection || currentCooldown > 0) {
       launcherState.lockProgress = Math.max(
@@ -432,13 +512,17 @@ export function updateLauncherMissiles(options: {
     }
     const missileId = `${defense.config.id}:missile:${options.nextMissileIdRef.value}`;
     options.nextMissileIdRef.value += 1;
-    const launchHeading = Math.atan2(
+    const launchHeading = launcherState.launchHeading ?? Math.atan2(
       interceptSolution.interceptPoint.y - defense.body.position.y,
       interceptSolution.interceptPoint.x - defense.body.position.x,
     );
     const launchDirection = {
       x: Math.cos(launchHeading),
       y: Math.sin(launchHeading),
+    };
+    const launchVelocity = {
+      x: defense.body.velocity.x + launchDirection.x * defense.config.torpedoSpeed,
+      y: defense.body.velocity.y + launchDirection.y * defense.config.torpedoSpeed,
     };
     const missileBody = options.simulation.addBody({
       id: missileId,
@@ -456,10 +540,7 @@ export function updateLauncherMissiles(options: {
         x: defense.body.position.x + launchDirection.x * (defense.config.radius + 18),
         y: defense.body.position.y + launchDirection.y * (defense.config.radius + 18),
       },
-      velocity: {
-        x: launchDirection.x * defense.config.torpedoSpeed,
-        y: launchDirection.y * defense.config.torpedoSpeed,
-      },
+      velocity: launchVelocity,
       propulsion: {
         heading: launchHeading,
         throttle: 1,
@@ -476,6 +557,9 @@ export function updateLauncherMissiles(options: {
       body: missileBody,
       sprite,
       sourceId: defense.config.id,
+      sourceType: "defense",
+      targetId: options.interceptorBody.id,
+      turnRate: defense.config.torpedoTurnRate,
       lifetimeSeconds: 18,
       interceptSolution: { ...interceptSolution },
       detonationElapsedSeconds: null,
@@ -487,6 +571,9 @@ export function updateLauncherMissiles(options: {
     });
     options.defenseCooldowns.set(defense.config.id, defense.config.cooldownSeconds);
     launcherState.lockProgress = 0;
+    launcherState.lockedTargetId = null;
+    launcherState.hasAvailableCourse = false;
+    launcherState.launchHeading = null;
     launcherState.interceptSolution = null;
   }
 
@@ -586,6 +673,46 @@ export function applyCollisionEventsToShip(
       relativeSpeed: event.relativeSpeed,
     };
     return;
+  }
+}
+
+export function applyCollisionEventsToDefenses(
+  collisionEvents: readonly CollisionEvent[],
+  missileVisuals: readonly MissileVisual[],
+  defenseVisuals: readonly DefenseCombatVisual[],
+): void {
+  const playerMissileById = new Map(
+    missileVisuals
+      .filter((missile) => (missile.sourceType ?? "defense") === "player")
+      .map((missile) => [missile.id, missile] as const),
+  );
+  const defenseById = new Map(
+    defenseVisuals.map((defense) => [defense.config.id, defense] as const),
+  );
+
+  for (const event of collisionEvents) {
+    const missile = playerMissileById.get(event.aId)
+      ?? playerMissileById.get(event.bId)
+      ?? null;
+    if (!missile) {
+      continue;
+    }
+
+    const defenseId = missile.id === event.aId ? event.bId : event.aId;
+    const defense = defenseById.get(defenseId);
+    if (!defense || defense.destroyed) {
+      continue;
+    }
+
+    if (missile.detonationElapsedSeconds === null) {
+      detonateMissile(missile);
+      missile.detonationPosition = {
+        x: event.impactPosition.x,
+        y: event.impactPosition.y,
+      };
+    }
+    missile.splashApplied = true;
+    defense.destroyed = true;
   }
 }
 
@@ -1052,6 +1179,9 @@ function resetLauncherState(launcherState: LauncherState): void {
   launcherState.lockProgress = 0;
   launcherState.hasDetection = false;
   launcherState.detectedOccluderId = null;
+  launcherState.lockedTargetId = null;
+  launcherState.hasAvailableCourse = false;
+  launcherState.launchHeading = null;
   launcherState.interceptSolution = null;
   launcherState.beamEngagement = 0;
   launcherState.firing = false;
@@ -1128,6 +1258,95 @@ function getTorpedoAcceleration(defense: DefenseConfig): number {
   return defense.torpedoThrust / torpedoMass;
 }
 
+function resolveTorpedoLaunchCourse(options: {
+  defense: DefenseCombatVisual;
+  targetForecast: TrajectoryForecast;
+  elapsedSeconds: number;
+  fallbackInterceptSolution: InterceptSolution;
+}): {
+  available: boolean;
+  launchHeading: number;
+  interceptSolution: InterceptSolution | null;
+} {
+  const fallbackHeading = Math.atan2(
+    options.fallbackInterceptSolution.interceptPoint.y - options.defense.body.position.y,
+    options.fallbackInterceptSolution.interceptPoint.x - options.defense.body.position.x,
+  );
+  const launchHeading = resolveTravelHeading(options.defense.body.velocity, fallbackHeading);
+  const launchDirection = {
+    x: Math.cos(launchHeading),
+    y: Math.sin(launchHeading),
+  };
+  const launchPosition = {
+    x: options.defense.body.position.x +
+      launchDirection.x * (options.defense.config.radius + 18),
+    y: options.defense.body.position.y +
+      launchDirection.y * (options.defense.config.radius + 18),
+  };
+  const launchVelocity = {
+    x: options.defense.body.velocity.x +
+      launchDirection.x * options.defense.config.torpedoSpeed,
+    y: options.defense.body.velocity.y +
+      launchDirection.y * options.defense.config.torpedoSpeed,
+  };
+  const launchSpeed = Math.hypot(launchVelocity.x, launchVelocity.y);
+
+  if (launchSpeed <= 0.001) {
+    return {
+      available: false,
+      launchHeading,
+      interceptSolution: null,
+    };
+  }
+
+  const interceptSolution = findInterceptFromForecast({
+    forecast: options.targetForecast,
+    startTimeSeconds: options.elapsedSeconds,
+    sourcePosition: launchPosition,
+    interceptorSpeed: launchSpeed,
+    interceptorAcceleration: getTorpedoAcceleration(options.defense.config),
+    toleranceMultiplier: 1.12,
+  });
+  if (interceptSolution?.confidence !== "predicted") {
+    return {
+      available: false,
+      launchHeading,
+      interceptSolution: null,
+    };
+  }
+
+  const desiredHeading = Math.atan2(
+    interceptSolution.interceptPoint.y - launchPosition.y,
+    interceptSolution.interceptPoint.x - launchPosition.x,
+  );
+  const headingDelta = Math.abs(normalizeAngle(desiredHeading - launchHeading));
+  const availableTurnWindowSeconds = Math.max(
+    0.35,
+    interceptSolution.timeToInterceptSeconds,
+  );
+  const maxCourseTurnRadians =
+    options.defense.config.torpedoTurnRate * availableTurnWindowSeconds;
+  const available =
+    headingDelta <= maxCourseTurnRadians + Math.PI / 36;
+
+  return {
+    available,
+    launchHeading,
+    interceptSolution: available ? interceptSolution : null,
+  };
+}
+
+function resolveTravelHeading(
+  velocity: Vector2Like,
+  fallbackHeading: number,
+): number {
+  const speed = Math.hypot(velocity.x, velocity.y);
+  if (speed <= 0.01) {
+    return fallbackHeading;
+  }
+  return Math.atan2(velocity.y, velocity.x);
+}
+
 function tryApplyMissileSplashDamageToShip(
   missile: MissileVisual,
   interceptorBody: OrbitalBodyState,
@@ -1157,6 +1376,53 @@ function tryApplyMissileSplashDamageToShip(
     otherBodyId: missile.id,
     relativeSpeed: 0,
   };
+}
+
+function findPlayerTorpedoLockTarget(
+  missile: MissileVisual,
+  defenses: readonly DefenseCombatVisual[],
+): DefenseCombatVisual | null {
+  const heading = missile.body.propulsion
+    ? missile.body.propulsion.heading
+    : Math.atan2(missile.body.velocity.y, missile.body.velocity.x);
+  const forwardX = Math.cos(heading);
+  const forwardY = Math.sin(heading);
+  let nearestTarget: DefenseCombatVisual | null = null;
+  let nearestScore = Number.POSITIVE_INFINITY;
+
+  for (const defense of defenses) {
+    if (defense.destroyed || defense.config.weaponType === "station") {
+      continue;
+    }
+
+    const toTargetX = defense.body.position.x - missile.body.position.x;
+    const toTargetY = defense.body.position.y - missile.body.position.y;
+    const forwardDistance = toTargetX * forwardX + toTargetY * forwardY;
+
+    if (
+      forwardDistance <= 0 ||
+      forwardDistance > PLAYER_TORPEDO_LOCK_MAX_FORWARD_DISTANCE
+    ) {
+      continue;
+    }
+
+    const lateralDistance = Math.abs(toTargetX * forwardY - toTargetY * forwardX);
+    const maxLateralDistance =
+      Math.max(26, defense.config.radius) + PLAYER_TORPEDO_LOCK_CORRIDOR_PADDING;
+
+    if (lateralDistance > maxLateralDistance) {
+      continue;
+    }
+
+    const distance = Math.hypot(toTargetX, toTargetY);
+    const lockScore = distance + lateralDistance * 1.6;
+    if (lockScore < nearestScore) {
+      nearestScore = lockScore;
+      nearestTarget = defense;
+    }
+  }
+
+  return nearestTarget;
 }
 
 function hasMissileOvershotTarget(

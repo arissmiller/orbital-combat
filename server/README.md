@@ -5,17 +5,20 @@ This directory contains a minimal authoritative server scaffold for browser mult
 ## Current capabilities
 
 - Accepts WebSocket clients on `/ws`
-- Generates lobby room codes
-- Supports create/join/leave/ready/start-match flow
-- Runs a placeholder authoritative simulation at 20 Hz
+- Generates lobby room codes and creates rooms on-demand (up to 4 active rooms)
+- Broadcasts joinable room directory updates for lobby browsing and live match drop-ins (`room-list`)
+- Supports create/join/leave/ready/start-match flow (including solo start and joining active matches)
+- Runs an authoritative simulation at 20 Hz on `Caldera Twin-Moon Arena`
+- Simulates a gas giant with two moons using different orbital eccentricities
 - Broadcasts room state and simulation snapshots
+- Keeps running matches alive when one player disconnects (room only ends when empty)
+- Can serve built frontend assets from the same process/port (`dist/`)
 
 ## Not implemented yet
 
 - Persistence
 - Matchmaking services
 - Authentication
-- Real combat/orbital simulation parity with client runtime
 - Security hardening / anti-cheat
 
 ## Protocol shape (high level)
@@ -30,11 +33,13 @@ Client messages:
 - `start-match`
 - `input`
 - `ping`
+- `list-rooms`
 
 Server messages:
 
 - `welcome`
 - `room-update`
+- `room-list`
 - `match-started`
 - `snapshot`
 - `pong`
@@ -42,3 +47,9 @@ Server messages:
 - `error`
 
 See `server/protocol.ts` for authoritative TypeScript contracts.
+
+## Railway notes
+
+- Server listens on `MULTIPLAYER_PORT` first, then falls back to `PORT`.
+- Recommended build command: `npm run build:deploy`
+- Recommended start command: `npm start`

@@ -1279,6 +1279,7 @@ export function drawDefenseLockOverlay(
   graphics: Graphics,
   defenseLockStates: ReadonlyMap<string, DefenseLockStateLike>,
   visibleDefenseContacts: readonly ScannerContactLike[],
+  selectedDefenseId?: string | null,
 ): void {
   graphics.clear();
 
@@ -1334,6 +1335,23 @@ export function drawDefenseLockOverlay(
       width: WORLD_OVERLAY_STYLES.defenseLock.ringWidth,
       alpha: 0.18 + defenseLockState.progress * 0.2,
     });
+
+    if (selectedDefenseId && defense.config.id === selectedDefenseId) {
+      graphics.circle(center.x, center.y, lockSize + 14);
+      graphics.stroke({
+        color: WORLD_OVERLAY_STYLES.defenseLock.lockedColor,
+        width: WORLD_OVERLAY_STYLES.defenseLock.lockedWidth + 0.5,
+        alpha: 0.9,
+      });
+      graphics.moveTo(center.x, center.y);
+      graphics.lineTo(center.x, center.y - (lockSize + 20));
+      graphics.stroke({
+        color: WORLD_OVERLAY_STYLES.defenseLock.lockedColor,
+        width: WORLD_OVERLAY_STYLES.defenseLock.lockedWidth,
+        alpha: 0.75,
+        cap: "round",
+      });
+    }
   }
 }
 

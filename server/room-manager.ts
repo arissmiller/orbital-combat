@@ -1,16 +1,23 @@
 import { WebSocket } from "ws";
 import type { RawData } from "ws";
 import {
+  buildRoomMapSnapshot,
+  getDefaultMultiplayerMapDefinition,
+  type MultiplayerMapDefinition,
+} from "./map.js";
+import {
   DEFAULT_MAX_PLAYERS,
   ROOM_CODE_LENGTH,
   SERVER_TICK_RATE,
   type ClientMessage,
   type PlayerInputCommand,
+  type PublicRoomSnapshot,
   type RoomSnapshot,
   type ServerMessage,
   type RoomPlayerSnapshot,
 } from "./protocol.js";
 import {
+  addPlayerToSimulation,
   buildSimulationSnapshot,
   createRoomSimulation,
   removePlayerFromSimulation,
@@ -19,6 +26,7 @@ import {
 } from "./simulation.js";
 
 const ROOM_CODE_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
+const MAX_ACTIVE_ROOMS = 4;
 
 interface ConnectedClient {
   id: string;
@@ -36,13 +44,35 @@ interface RoomState {
   maxPlayers: number;
   hostPlayerId: string;
   playerIds: string[];
+  mapDefinition: MultiplayerMapDefinition;
   simulation: RoomSimulationState | null;
+  persistent: boolean;
 }
 
 export class RoomManager {
   private readonly clients = new Map<string, ConnectedClient>();
   private readonly rooms = new Map<string, RoomState>();
   private nextClientId = 1;
+
+  public initPersistentRooms(): void {
+    const configs = [{ code: "FFA-01" }, { code: "FFA-02" }];
+    for (const config of configs) {
+      const mapDefinition = getDefaultMultiplayerMapDefinition();
+      const simulation = createRoomSimulation(config.code, [], mapDefinition);
+      const room: RoomState = {
+        code: config.code,
+        status: "running",
+        maxPlayers: 4,
+        hostPlayerId: "server",
+        playerIds: [],
+        mapDefinition,
+        simulation,
+        persistent: true,
+      };
+      this.rooms.set(config.code, room);
+      console.log(`[room-manager] persistent room ${config.code} ready`);
+    }
+  }
 
   public registerClient(socket: WebSocket): ConnectedClient {
     const clientId = `p${this.nextClientId}`;
@@ -59,6 +89,7 @@ export class RoomManager {
     };
 
     this.clients.set(clientId, client);
+    this.broadcastRoomDirectory();
     return client;
   }
 
@@ -71,6 +102,7 @@ export class RoomManager {
     client.connected = false;
     this.leaveRoom(client, "Player disconnected.");
     this.clients.delete(clientId);
+    this.broadcastRoomDirectory();
   }
 
   public handleMessage(clientId: string, message: ClientMessage): void {
@@ -84,6 +116,7 @@ export class RoomManager {
         if (message.displayName) {
           client.displayName = message.displayName;
           this.broadcastRoomUpdate(client.roomCode);
+          this.broadcastRoomDirectory();
         }
         return;
       case "create-room":
@@ -115,6 +148,9 @@ export class RoomManager {
           serverTimeMs: Date.now(),
         });
         return;
+      case "list-rooms":
+        this.sendRoomDirectory(client);
+        return;
       default:
         return;
     }
@@ -134,7 +170,7 @@ export class RoomManager {
       }
 
       stepRoomSimulation(room.simulation, inputByPlayerId, stepSeconds);
-      const snapshot = buildSimulationSnapshot(room.simulation);
+      const snapshot = buildSimulationSnapshot(room.simulation, inputByPlayerId);
       this.broadcast(room, {
         type: "snapshot",
         snapshot,
@@ -163,6 +199,18 @@ export class RoomManager {
   }
 
   private createRoomForClient(client: ConnectedClient, maxPlayers: number): void {
+    const userRoomCount = [...this.rooms.values()].filter((r) => !r.persistent).length;
+    if (userRoomCount >= MAX_ACTIVE_ROOMS) {
+      this.sendError(
+        client,
+        "room-limit-reached",
+        `Server room cap reached (${MAX_ACTIVE_ROOMS}). Try joining an existing room.`,
+      );
+      this.sendRoomDirectory(client);
+      return;
+    }
+
+    const mapDefinition = getDefaultMultiplayerMapDefinition();
     const roomCode = this.generateRoomCode();
     const clampedMaxPlayers = clampInteger(maxPlayers, 2, 8);
     const room: RoomState = {
@@ -171,7 +219,9 @@ export class RoomManager {
       maxPlayers: clampedMaxPlayers,
       hostPlayerId: client.id,
       playerIds: [client.id],
+      mapDefinition,
       simulation: null,
+      persistent: false,
     };
 
     client.roomCode = roomCode;
@@ -181,19 +231,18 @@ export class RoomManager {
 
     this.send(client, {
       type: "info",
-      message: `Room ${roomCode} created.`,
+      message:
+        `Room ${roomCode} created on map ${mapDefinition.name}.`
+        + ` (${userRoomCount + 1}/${MAX_ACTIVE_ROOMS} active rooms)`,
     });
     this.broadcastRoomUpdate(roomCode);
+    this.broadcastRoomDirectory();
   }
 
   private joinRoom(client: ConnectedClient, roomCode: string): void {
     const room = this.rooms.get(roomCode);
     if (!room) {
       this.sendError(client, "room-not-found", `Room ${roomCode} does not exist.`);
-      return;
-    }
-    if (room.status !== "lobby") {
-      this.sendError(client, "room-running", "This room already has an active match.");
       return;
     }
     if (room.playerIds.length >= room.maxPlayers) {
@@ -207,11 +256,53 @@ export class RoomManager {
     client.ready = false;
     client.lastInput = null;
 
+    if (room.status === "running") {
+      if (!room.simulation) {
+        this.sendError(
+          client,
+          "match-unavailable",
+          "This room is currently unavailable. Try again in a moment.",
+        );
+        room.playerIds = room.playerIds.filter((playerId) => playerId !== client.id);
+        client.roomCode = null;
+        this.broadcastRoomDirectory();
+        return;
+      }
+
+      const added = addPlayerToSimulation(room.simulation, client.id);
+      if (!added) {
+        this.sendError(
+          client,
+          "match-join-failed",
+          "Failed to add you to the active match. Try again.",
+        );
+        room.playerIds = room.playerIds.filter((playerId) => playerId !== client.id);
+        client.roomCode = null;
+        this.broadcastRoomDirectory();
+        return;
+      }
+
+      this.send(client, {
+        type: "match-started",
+        roomCode: room.code,
+        tick: room.simulation.tick,
+        serverTimeMs: Date.now(),
+      });
+      this.send(client, {
+        type: "snapshot",
+        snapshot: buildSimulationSnapshot(room.simulation, new Map()),
+      });
+    }
+
     this.broadcast(room, {
       type: "info",
-      message: `${client.displayName} joined room ${room.code}.`,
+      message:
+        room.status === "running"
+          ? `${client.displayName} dropped into room ${room.code}.`
+          : `${client.displayName} joined room ${room.code}.`,
     });
     this.broadcastRoomUpdate(room.code);
+    this.broadcastRoomDirectory();
   }
 
   private leaveRoom(client: ConnectedClient, infoMessage?: string): void {
@@ -235,7 +326,12 @@ export class RoomManager {
     }
 
     if (room.playerIds.length === 0) {
-      this.rooms.delete(room.code);
+      if (!room.persistent) {
+        this.rooms.delete(room.code);
+      } else {
+        room.hostPlayerId = "server";
+      }
+      this.broadcastRoomDirectory();
       return;
     }
 
@@ -243,21 +339,7 @@ export class RoomManager {
       room.hostPlayerId = room.playerIds[0] ?? room.hostPlayerId;
     }
 
-    if (room.status === "running") {
-      room.status = "lobby";
-      room.simulation = null;
-      for (const playerId of room.playerIds) {
-        const remaining = this.clients.get(playerId);
-        if (remaining) {
-          remaining.ready = false;
-          remaining.lastInput = null;
-        }
-      }
-      this.broadcast(room, {
-        type: "info",
-        message: "Match stopped because a player left.",
-      });
-    } else if (infoMessage) {
+    if (room.status !== "running" && infoMessage) {
       this.send(client, { type: "info", message: infoMessage });
     }
 
@@ -266,6 +348,7 @@ export class RoomManager {
       message: `${client.displayName} left room ${room.code}.`,
     });
     this.broadcastRoomUpdate(room.code);
+    this.broadcastRoomDirectory();
   }
 
   private setReadyState(client: ConnectedClient, ready: boolean): void {
@@ -296,22 +379,28 @@ export class RoomManager {
       this.sendError(client, "already-running", "Match is already running.");
       return;
     }
-    if (room.playerIds.length < 2) {
-      this.sendError(client, "not-enough-players", "At least 2 players are required.");
+    if (room.playerIds.length < 1) {
+      this.sendError(client, "not-enough-players", "At least 1 player is required.");
       return;
     }
 
-    const missingReady = room.playerIds.some((playerId) => {
-      const roomClient = this.clients.get(playerId);
-      return roomClient ? !roomClient.ready : true;
-    });
-    if (missingReady) {
-      this.sendError(client, "players-not-ready", "All players must be ready first.");
-      return;
+    if (room.playerIds.length > 1) {
+      const missingReady = room.playerIds.some((playerId) => {
+        const roomClient = this.clients.get(playerId);
+        return roomClient ? !roomClient.ready : true;
+      });
+      if (missingReady) {
+        this.sendError(client, "players-not-ready", "All players must be ready first.");
+        return;
+      }
     }
 
     room.status = "running";
-    room.simulation = createRoomSimulation(room.code, room.playerIds);
+    room.simulation = createRoomSimulation(
+      room.code,
+      room.playerIds,
+      room.mapDefinition,
+    );
     for (const playerId of room.playerIds) {
       const roomClient = this.clients.get(playerId);
       if (roomClient) {
@@ -326,6 +415,7 @@ export class RoomManager {
       serverTimeMs: Date.now(),
     });
     this.broadcastRoomUpdate(room.code);
+    this.broadcastRoomDirectory();
   }
 
   private recordPlayerInput(client: ConnectedClient, input: PlayerInputCommand): void {
@@ -378,6 +468,7 @@ export class RoomManager {
       maxPlayers: room.maxPlayers,
       hostPlayerId: room.hostPlayerId,
       players,
+      map: buildRoomMapSnapshot(room.mapDefinition),
     };
   }
 
@@ -404,6 +495,48 @@ export class RoomManager {
       code,
       message,
     });
+  }
+
+  private broadcastRoomDirectory(): void {
+    for (const client of this.clients.values()) {
+      this.sendRoomDirectory(client);
+    }
+  }
+
+  private sendRoomDirectory(client: ConnectedClient): void {
+    this.send(client, {
+      type: "room-list",
+      rooms: this.buildPublicRoomSnapshots(),
+    });
+  }
+
+  private buildPublicRoomSnapshots(): PublicRoomSnapshot[] {
+    const rooms: PublicRoomSnapshot[] = [];
+    for (const room of this.rooms.values()) {
+      if (room.playerIds.length >= room.maxPlayers) {
+        continue;
+      }
+      const host = this.clients.get(room.hostPlayerId);
+      rooms.push({
+        code: room.code,
+        status: room.status,
+        playerCount: room.playerIds.length,
+        maxPlayers: room.maxPlayers,
+        hostDisplayName: host?.displayName ?? (room.persistent ? "Server" : "Host"),
+        map: buildRoomMapSnapshot(room.mapDefinition),
+      });
+    }
+
+    rooms.sort((left, right) => {
+      if (left.status !== right.status) {
+        return left.status === "lobby" ? -1 : 1;
+      }
+      if (left.playerCount !== right.playerCount) {
+        return right.playerCount - left.playerCount;
+      }
+      return left.code.localeCompare(right.code);
+    });
+    return rooms;
   }
 
   private generateRoomCode(): string {
