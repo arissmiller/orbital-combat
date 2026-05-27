@@ -7,6 +7,7 @@ import {
 } from "../game/ships/systems";
 import type {
   GameOverlayState,
+  OverlayMultiplayerEventState,
   OverlayScoreboardState,
   OverlaySystemPanelState,
   OverlayVitalsState,
@@ -36,6 +37,7 @@ interface BuildPrototypeHudStateOptions {
   warnings: readonly GameWarningState[];
   audioCueIds: readonly string[];
   playerVitals?: OverlayVitalsState | null;
+  multiplayerEvents?: readonly OverlayMultiplayerEventState[];
 }
 
 const SYSTEM_PANEL_CONFIG: readonly {
@@ -129,6 +131,7 @@ export function buildPrototypeHudState(
       options.trainingMissionEnabled,
     ),
     vitals: options.playerVitals ?? null,
+    multiplayerEvents: [...(options.multiplayerEvents ?? [])],
   };
 }
 

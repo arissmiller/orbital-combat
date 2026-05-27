@@ -76,21 +76,6 @@ export function mountMultiplayerMenuScene(context: SceneContext): SceneHandle {
     writeStoredValue(MULTIPLAYER_SERVER_URL_KEY, sanitized);
   };
 
-  const promptJoinRoom = (): void => {
-    if (typeof window === "undefined") {
-      return;
-    }
-    const roomCode = window.prompt("Room code (6 characters)", "");
-    if (roomCode === null) {
-      return;
-    }
-    const normalized = roomCode.trim().toUpperCase();
-    if (normalized.length !== 6) {
-      return;
-    }
-    client.joinRoom(normalized);
-  };
-
   const promptCreateRoom = (): void => {
     if (typeof window === "undefined") {
       return;
@@ -143,9 +128,8 @@ export function mountMultiplayerMenuScene(context: SceneContext): SceneHandle {
         promptDisplayName,
         promptServerUrl,
         promptCreateRoom,
-        promptJoinRoom,
       ),
-      cards: buildCards(state, client, promptCreateRoom, promptJoinRoom),
+      cards: buildCards(state, client, promptCreateRoom),
       footerActions: [
         {
           label: "Back",
@@ -179,7 +163,6 @@ function buildActions(
   promptDisplayName: () => void,
   promptServerUrl: () => void,
   promptCreateRoom: () => void,
-  promptJoinRoom: () => void,
 ): MenuActionState[] {
   const room = state.room;
   const self = room?.players.find((player) => player.id === state.playerId) ?? null;
@@ -236,11 +219,6 @@ function buildActions(
         label: "Refresh",
         accentColor: "#8ee8ff",
         onSelect: () => client.requestRoomList(),
-      },
-      {
-        label: "Join by Code",
-        accentColor: "#7fe7d0",
-        onSelect: promptJoinRoom,
       },
       {
         label: "Set Display Name",
@@ -318,7 +296,6 @@ function buildCards(
   state: MultiplayerClientState,
   client: BrowserMultiplayerClient,
   promptCreateRoom: () => void,
-  promptJoinRoom: () => void,
 ): MenuCardState[] {
   if (state.connectionStatus !== "connected" || state.room) {
     return [];
@@ -373,19 +350,6 @@ function buildCards(
       });
     }
   }
-
-  cards.push({
-    key: "join-by-code",
-    eyebrow: "DIRECT",
-    title: "Join by Code",
-    description: "Enter a 6-character room code to join directly.",
-    accentColor: "#ffd173",
-    action: {
-      label: "Enter Code",
-      accentColor: "#ffd173",
-      onSelect: promptJoinRoom,
-    },
-  });
 
   return cards;
 }

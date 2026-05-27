@@ -1,6 +1,10 @@
 import { Container, Graphics } from "pixi.js";
 import { COMBAT_BALANCE } from "./combat-balance";
 import {
+  resolveArmedWeaponDischarge,
+  updateWeaponEngagementStates,
+} from "../../../shared/player-weapon-core.js";
+import {
   findInterceptFromForecast,
   type InterceptSolution,
 } from "../forecasting/intercepts";
@@ -779,37 +783,14 @@ export function updateDisintegratorEngagementStates(
   engageDecayPerSecond: number,
   deltaSeconds: number,
 ): void {
-  const activeIds = new Set(activeTargets.map((target) => target.id));
-
-  for (const [targetId, state] of disintegratorEngagementStates.entries()) {
-    if (canEngage && activeIds.has(targetId)) {
-      continue;
-    }
-
-    state.progress = Math.max(
-      0,
-      state.progress - deltaSeconds * engageDecayPerSecond,
-    );
-
-    if (state.progress === 0) {
-      disintegratorEngagementStates.delete(targetId);
-    }
-  }
-
-  if (!canEngage) {
-    return;
-  }
-
-  for (const target of activeTargets) {
-    const state = disintegratorEngagementStates.get(target.id) ?? {
-      progress: 0,
-    };
-    state.progress = Math.min(
-      1,
-      state.progress + deltaSeconds * engageRampUpPerSecond,
-    );
-    disintegratorEngagementStates.set(target.id, state);
-  }
+  updateWeaponEngagementStates(
+    disintegratorEngagementStates,
+    activeTargets,
+    canEngage,
+    engageRampUpPerSecond,
+    engageDecayPerSecond,
+    deltaSeconds,
+  );
 }
 
 export function resolveArmedDisintegrator(options: {
@@ -826,13 +807,21 @@ export function resolveArmedDisintegrator(options: {
   chargePerTarget: number;
   neutralizedTorpedoCount: number;
 } {
-  if (
-    !options.weaponArmed ||
-    options.isPaused ||
-    options.isCrashed ||
-    options.activeTargets.length === 0 ||
-    options.shipSystems.weapons.charge <= 0
-  ) {
+  const fireResult = resolveArmedWeaponDischarge({
+    weaponArmed: options.weaponArmed,
+    blocked: options.isPaused || options.isCrashed,
+    deltaSeconds: options.deltaSeconds,
+    weaponCharge: options.shipSystems.weapons.charge,
+    energyCostMultiplier: getWeaponEnergyCostMultiplier(options.shipSystems),
+    dischargePerSecond: COMBAT_BALANCE.disintegrator.dischargePerSecond,
+    engageStartThreshold: COMBAT_BALANCE.disintegrator.engageStartThreshold,
+    damageMultiplier: getWeaponDamageMultiplier(options.shipSystems),
+    activeTargets: options.activeTargets,
+    engagementStates: options.disintegratorEngagementStates,
+  });
+  options.shipSystems.weapons.charge = fireResult.nextWeaponCharge;
+
+  if (!fireResult.fired) {
     return {
       fired: false,
       targetCount: 0,
@@ -840,44 +829,11 @@ export function resolveArmedDisintegrator(options: {
       neutralizedTorpedoCount: 0,
     };
   }
-
-  const weightedTargets = options.activeTargets
-    .map((target) => ({
-      target,
-      progress: options.disintegratorEngagementStates.get(target.id)?.progress ?? 0,
-    }))
-    .filter((entry) => entry.progress > COMBAT_BALANCE.disintegrator.engageStartThreshold);
-  const totalProgress = weightedTargets.reduce((sum, entry) => sum + entry.progress, 0);
-
-  if (weightedTargets.length === 0 || totalProgress <= 0) {
-    return {
-      fired: false,
-      targetCount: 0,
-      chargePerTarget: 0,
-      neutralizedTorpedoCount: 0,
-    };
-  }
-
-  const maxDischarge = Math.min(
-    options.shipSystems.weapons.charge / getWeaponEnergyCostMultiplier(options.shipSystems),
-    options.deltaSeconds *
-      COMBAT_BALANCE.disintegrator.dischargePerSecond *
-      Math.min(1, totalProgress / weightedTargets.length),
-  );
-  const chargePerTarget = maxDischarge / weightedTargets.length;
-
-  options.shipSystems.weapons.charge = Math.max(
-    0,
-    options.shipSystems.weapons.charge -
-      maxDischarge * getWeaponEnergyCostMultiplier(options.shipSystems),
-  );
 
   let neutralizedTorpedoCount = 0;
-  for (const { target, progress } of weightedTargets) {
-    const appliedEnergy =
-      ((maxDischarge * progress) / totalProgress) *
-      getWeaponDamageMultiplier(options.shipSystems);
-
+  for (const allocation of fireResult.allocations) {
+    const target = allocation.target;
+    const appliedEnergy = allocation.appliedEnergy;
     if (target.kind === "torpedo" && target.missile) {
       const missile = target.missile;
 
@@ -910,8 +866,8 @@ export function resolveArmedDisintegrator(options: {
 
   return {
     fired: true,
-    targetCount: weightedTargets.length,
-    chargePerTarget,
+    targetCount: fireResult.targetCount,
+    chargePerTarget: fireResult.chargePerTarget,
     neutralizedTorpedoCount,
   };
 }
@@ -931,13 +887,21 @@ export function resolveArmedDisruptor(options: {
   chargePerTarget: number;
   neutralizedTorpedoCount: number;
 } {
-  if (
-    !options.weaponArmed ||
-    options.isPaused ||
-    options.isCrashed ||
-    options.activeTargets.length === 0 ||
-    options.shipSystems.weapons.charge <= 0
-  ) {
+  const fireResult = resolveArmedWeaponDischarge({
+    weaponArmed: options.weaponArmed,
+    blocked: options.isPaused || options.isCrashed,
+    deltaSeconds: options.deltaSeconds,
+    weaponCharge: options.shipSystems.weapons.charge,
+    energyCostMultiplier: getWeaponEnergyCostMultiplier(options.shipSystems),
+    dischargePerSecond: COMBAT_BALANCE.disruptor.dischargePerSecond,
+    engageStartThreshold: COMBAT_BALANCE.disruptor.engageStartThreshold,
+    damageMultiplier: getWeaponDamageMultiplier(options.shipSystems),
+    activeTargets: options.activeTargets,
+    engagementStates: options.disintegratorEngagementStates,
+  });
+  options.shipSystems.weapons.charge = fireResult.nextWeaponCharge;
+
+  if (!fireResult.fired) {
     return {
       fired: false,
       targetCount: 0,
@@ -946,46 +910,14 @@ export function resolveArmedDisruptor(options: {
     };
   }
 
-  const weightedTargets = options.activeTargets
-    .map((target) => ({
-      target,
-      progress: options.disintegratorEngagementStates.get(target.id)?.progress ?? 0,
-    }))
-    .filter((entry) => entry.progress > COMBAT_BALANCE.disruptor.engageStartThreshold);
-  const totalProgress = weightedTargets.reduce((sum, entry) => sum + entry.progress, 0);
-
-  if (weightedTargets.length === 0 || totalProgress <= 0) {
-    return {
-      fired: false,
-      targetCount: 0,
-      chargePerTarget: 0,
-      neutralizedTorpedoCount: 0,
-    };
-  }
-
-  const maxDischarge = Math.min(
-    options.shipSystems.weapons.charge / getWeaponEnergyCostMultiplier(options.shipSystems),
-    options.deltaSeconds *
-      COMBAT_BALANCE.disruptor.dischargePerSecond *
-      Math.min(1, totalProgress / weightedTargets.length),
-  );
-  const chargePerTarget = maxDischarge / weightedTargets.length;
-
-  options.shipSystems.weapons.charge = Math.max(
-    0,
-    options.shipSystems.weapons.charge -
-      maxDischarge * getWeaponEnergyCostMultiplier(options.shipSystems),
-  );
-
-  for (const { target, progress } of weightedTargets) {
+  for (const allocation of fireResult.allocations) {
+    const target = allocation.target;
     if (target.kind !== "defense" || !target.defense || target.defense.destroyed) {
       continue;
     }
 
     const defense = target.defense;
-    const appliedEnergy =
-      ((maxDischarge * progress) / totalProgress) *
-      getWeaponDamageMultiplier(options.shipSystems);
+    const appliedEnergy = allocation.appliedEnergy;
 
     if (defense.shieldCharge > 0) {
       const shieldDamage = appliedEnergy * COMBAT_BALANCE.disruptor.shieldDamageMultiplier;
@@ -1006,8 +938,8 @@ export function resolveArmedDisruptor(options: {
 
   return {
     fired: true,
-    targetCount: weightedTargets.length,
-    chargePerTarget,
+    targetCount: fireResult.targetCount,
+    chargePerTarget: fireResult.chargePerTarget,
     neutralizedTorpedoCount: 0,
   };
 }
