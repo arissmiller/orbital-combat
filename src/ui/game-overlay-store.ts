@@ -85,6 +85,12 @@ export interface OverlayVitalsState {
   shieldMaxCharge: number;
 }
 
+export interface OverlayMultiplayerEventState {
+  id: string;
+  text: string;
+  tone: "system" | "combat" | "error";
+}
+
 export interface GameOverlayState {
   hudVisible: boolean;
   showLeaveGameButton: boolean;
@@ -99,6 +105,7 @@ export interface GameOverlayState {
   weaponAudio: OverlayWeaponAudioState | null;
   systems: OverlaySystemPanelState[];
   vitals: OverlayVitalsState | null;
+  multiplayerEvents: OverlayMultiplayerEventState[];
 }
 
 const DEFAULT_OVERLAY_STATE: GameOverlayState = {
@@ -115,6 +122,7 @@ const DEFAULT_OVERLAY_STATE: GameOverlayState = {
   weaponAudio: null,
   systems: [],
   vitals: null,
+  multiplayerEvents: [],
 };
 
 let overlayState: GameOverlayState = DEFAULT_OVERLAY_STATE;

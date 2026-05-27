@@ -1,5 +1,6 @@
 import type {
   SimCelestialBodySnapshot,
+  SimCombatEventSnapshot,
   SimPlayerSnapshot,
   SimulationSnapshot,
 } from "./multiplayer-protocol.js";
@@ -23,6 +24,7 @@ export interface ResolvedSimulationFrame {
   tick: number;
   players: ResolvedSimPlayerState[];
   celestialBodies: ResolvedSimCelestialBodyState[];
+  combatEvents: SimCombatEventSnapshot[];
 }
 
 export interface ResolveSimulationFrameOptions {
@@ -94,6 +96,16 @@ export function resolveSimulationFrame(
         && player.thrustHeading !== null && player.thrustHeading !== undefined
           ? lerpAngle(previousPlayer.thrustHeading, player.thrustHeading, alpha)
           : player.thrustHeading,
+      cloakCharge:
+        previousPlayer.cloakCharge !== undefined &&
+        player.cloakCharge !== undefined
+          ? lerp(previousPlayer.cloakCharge, player.cloakCharge, alpha)
+          : player.cloakCharge,
+      cloakMaxCharge:
+        previousPlayer.cloakMaxCharge !== undefined &&
+        player.cloakMaxCharge !== undefined
+          ? lerp(previousPlayer.cloakMaxCharge, player.cloakMaxCharge, alpha)
+          : player.cloakMaxCharge,
       renderX: lerp(previousPlayer.x, player.x, alpha),
       renderY: lerp(previousPlayer.y, player.y, alpha),
     };
@@ -120,6 +132,7 @@ export function resolveSimulationFrame(
     tick: latestSnapshot.tick,
     players,
     celestialBodies: bodies,
+    combatEvents: latestSnapshot.combatEvents ?? [],
   };
 }
 
@@ -177,6 +190,9 @@ function buildProjectedFrame(
       weaponArmed: player.weaponArmed,
       weaponMode: player.weaponMode,
       weaponFiring: player.weaponFiring,
+      cloakActive: player.cloakActive,
+      cloakCharge: player.cloakCharge,
+      cloakMaxCharge: player.cloakMaxCharge,
       life: player.life
         ? {
             alive: player.life.alive,
@@ -239,6 +255,9 @@ function buildProjectedFrame(
       weaponArmed: player.weaponArmed,
       weaponMode: player.weaponMode,
       weaponFiring: player.weaponFiring,
+      cloakActive: player.cloakActive,
+      cloakCharge: player.cloakCharge,
+      cloakMaxCharge: player.cloakMaxCharge,
       life: player.life
         ? {
             alive: player.life.alive,
@@ -302,6 +321,7 @@ function buildProjectedFrame(
     tick: snapshot.tick,
     players,
     celestialBodies: bodies,
+    combatEvents: snapshot.combatEvents ?? [],
   };
 }
 

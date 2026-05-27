@@ -40,6 +40,8 @@ export interface MultiplayerInputCommand {
   focusSubsystem?: "engines" | "scanners" | "weapons" | "defenses";
   weaponArmed?: boolean;
   weaponMode?: "disintegrator" | "disruptor";
+  targetPlayerId?: string | null;
+  cloakActive?: boolean;
 }
 
 export class BrowserMultiplayerClient {
@@ -313,6 +315,8 @@ export class BrowserMultiplayerClient {
       focusSubsystem: command.focusSubsystem,
       weaponArmed: command.weaponArmed,
       weaponMode: command.weaponMode,
+      targetPlayerId: command.targetPlayerId,
+      cloakActive: command.cloakActive,
     });
   }
 

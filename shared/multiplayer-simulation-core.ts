@@ -55,6 +55,20 @@ const STABLE_HEADING_MIN_SPEED = 0.18;
 const HEADING_ALIGNMENT_MIN_SPEED = 0.01;
 const PHYSICS_GRAVITATIONAL_CONSTANT = 750;
 const PHYSICS_SOFTENING = 15;
+const CLOAK_MIN_ACTIVE_CHARGE = 0.0001;
+export const PLAYER_CLOAK_MAX_CHARGE = 1;
+const PLAYER_CLOAK_DRAIN_PER_SECOND = 0.22;
+const PLAYER_CLOAK_RECHARGE_PER_SECOND = 0.12;
+
+const COAST_ONLY_FLIGHT_INPUT: FlightInputState = {
+  progradeInput: false,
+  retrogradeInput: false,
+  leftInput: false,
+  rightInput: false,
+  eBrakeInput: false,
+  gravityDiveInput: false,
+  boostInput: false,
+};
 
 const SHIP_SYSTEMS_BALANCE = {
   rechargePerSecond: 0.36,
@@ -100,6 +114,9 @@ export interface MultiplayerSimPlayerState {
   weaponMode?: PlayerWeaponMode;
   weaponFiring?: boolean;
   weaponDisabledUntilSeconds?: number;
+  cloakActive?: boolean;
+  cloakCharge?: number;
+  cloakMaxCharge?: number;
 }
 
 export interface MultiplayerSpawnOptions {
@@ -154,6 +171,9 @@ export function createSpawnedPlayers(
       weaponMode: "disintegrator",
       weaponFiring: false,
       weaponDisabledUntilSeconds: 0,
+      cloakActive: false,
+      cloakCharge: PLAYER_CLOAK_MAX_CHARGE,
+      cloakMaxCharge: PLAYER_CLOAK_MAX_CHARGE,
     });
   });
 
@@ -169,6 +189,9 @@ export function stepMultiplayerPlayers(
 ): void {
   for (const player of players.values()) {
     const inputCommand = inputByPlayerId.get(player.playerId) ?? null;
+    const cloakState = ensurePlayerCloakState(player);
+    let cloakCharge = cloakState.charge;
+    const cloakMaxCharge = cloakState.maxCharge;
     if (inputCommand) {
       player.lastProcessedInputSequence = inputCommand.sequence;
       if (typeof inputCommand.weaponArmed === "boolean") {
@@ -176,6 +199,9 @@ export function stepMultiplayerPlayers(
       }
       if (inputCommand.weaponMode) {
         player.weaponMode = inputCommand.weaponMode;
+      }
+      if (typeof inputCommand.cloakActive === "boolean") {
+        player.cloakActive = inputCommand.cloakActive;
       }
     }
     if (player.weaponArmed === undefined) {
@@ -190,6 +216,9 @@ export function stepMultiplayerPlayers(
     if (player.weaponDisabledUntilSeconds === undefined) {
       player.weaponDisabledUntilSeconds = 0;
     }
+    if (player.cloakActive === undefined) {
+      player.cloakActive = false;
+    }
     const life = ensurePlayerLifeState(player);
     if (life.respawnGraceSeconds > 0) {
       life.respawnGraceSeconds = Math.max(0, life.respawnGraceSeconds - stepSeconds);
@@ -201,8 +230,36 @@ export function stepMultiplayerPlayers(
       player.superBurnActive = false;
       player.lastCollisionImpactSpeed = 0;
       player.weaponFiring = false;
+      player.cloakActive = false;
+      cloakCharge = clamp(
+        cloakCharge + PLAYER_CLOAK_RECHARGE_PER_SECOND * stepSeconds,
+        0,
+        cloakMaxCharge,
+      );
+      player.cloakCharge = cloakCharge;
       continue;
     }
+
+    if (player.cloakActive && cloakCharge <= CLOAK_MIN_ACTIVE_CHARGE) {
+      player.cloakActive = false;
+    }
+    if (player.cloakActive) {
+      cloakCharge = Math.max(
+        0,
+        cloakCharge - PLAYER_CLOAK_DRAIN_PER_SECOND * stepSeconds,
+      );
+      if (cloakCharge <= CLOAK_MIN_ACTIVE_CHARGE) {
+        cloakCharge = 0;
+        player.cloakActive = false;
+      }
+    } else {
+      cloakCharge = clamp(
+        cloakCharge + PLAYER_CLOAK_RECHARGE_PER_SECOND * stepSeconds,
+        0,
+        cloakMaxCharge,
+      );
+    }
+    player.cloakCharge = cloakCharge;
 
     if (!player.systems) {
       player.systems = createShipSystemsState();
@@ -215,7 +272,9 @@ export function stepMultiplayerPlayers(
     }
 
     updateShipSystems(player.systems, stepSeconds);
-    const flightInput = toFlightInputState(inputCommand);
+    const flightInput = isPlayerCloaked(player)
+      ? COAST_ONLY_FLIGHT_INPUT
+      : toFlightInputState(inputCommand);
     const liveVelocityHeading =
       player.vx !== 0 || player.vy !== 0
         ? Math.atan2(player.vy, player.vx)
@@ -371,9 +430,18 @@ export function buildSimPlayerSnapshots(
       weaponArmed: player.weaponArmed,
       weaponMode: player.weaponMode,
       weaponFiring: player.weaponFiring,
+      cloakActive: player.cloakActive,
+      cloakCharge: player.cloakCharge !== undefined ? round3(player.cloakCharge) : undefined,
+      cloakMaxCharge: player.cloakMaxCharge !== undefined ? round3(player.cloakMaxCharge) : undefined,
     });
   }
   return snapshots;
+}
+
+export function isPlayerCloaked(
+  player: Pick<MultiplayerSimPlayerState, "cloakActive" | "cloakCharge">,
+): boolean {
+  return player.cloakActive === true && (player.cloakCharge ?? 0) > CLOAK_MIN_ACTIVE_CHARGE;
 }
 
 export function round3(value: number): number {
@@ -410,6 +478,26 @@ function ensurePlayerLifeState(
     player.life = createDefaultPlayerLifeState();
   }
   return player.life;
+}
+
+function ensurePlayerCloakState(
+  player: MultiplayerSimPlayerState,
+): { charge: number; maxCharge: number } {
+  const maxCharge = clamp(
+    player.cloakMaxCharge ?? PLAYER_CLOAK_MAX_CHARGE,
+    CLOAK_MIN_ACTIVE_CHARGE,
+    PLAYER_CLOAK_MAX_CHARGE,
+  );
+  player.cloakMaxCharge = maxCharge;
+  player.cloakCharge = clamp(
+    player.cloakCharge ?? maxCharge,
+    0,
+    maxCharge,
+  );
+  return {
+    charge: player.cloakCharge,
+    maxCharge,
+  };
 }
 
 function buildSimPlayerLifeSnapshot(

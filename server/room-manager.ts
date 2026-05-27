@@ -22,6 +22,7 @@ import {
   createRoomSimulation,
   removePlayerFromSimulation,
   stepRoomSimulation,
+  type RoomSimulationMode,
   type RoomSimulationState,
 } from "./simulation.js";
 
@@ -55,10 +56,18 @@ export class RoomManager {
   private nextClientId = 1;
 
   public initPersistentRooms(): void {
-    const configs = [{ code: "FFA-01" }, { code: "FFA-02" }];
+    const configs: Array<{ code: string; mode: RoomSimulationMode }> = [
+      { code: "FFA-01", mode: "ffa" },
+      { code: "FFA-02", mode: "ffa" },
+    ];
     for (const config of configs) {
       const mapDefinition = getDefaultMultiplayerMapDefinition();
-      const simulation = createRoomSimulation(config.code, [], mapDefinition);
+      const simulation = createRoomSimulation(
+        config.code,
+        [],
+        mapDefinition,
+        { mode: config.mode },
+      );
       const room: RoomState = {
         code: config.code,
         status: "running",
@@ -396,10 +405,14 @@ export class RoomManager {
     }
 
     room.status = "running";
+    const simulationMode: RoomSimulationMode = room.code.startsWith("FFA-")
+      ? "ffa"
+      : "standard";
     room.simulation = createRoomSimulation(
       room.code,
       room.playerIds,
       room.mapDefinition,
+      { mode: simulationMode },
     );
     for (const playerId of room.playerIds) {
       const roomClient = this.clients.get(playerId);

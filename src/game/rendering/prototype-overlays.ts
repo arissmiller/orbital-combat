@@ -408,6 +408,8 @@ export function drawEngineCompass(
     gravityHeading: number | null;
     scale?: number;
     boosted: boolean;
+    cloaked?: boolean;
+    cloakChargeFraction?: number | null;
   },
 ): void {
   graphics.clear();
@@ -417,25 +419,34 @@ export function drawEngineCompass(
   const radius = style.radius * scale;
   const innerRadius = style.innerRadius * scale;
   const clampedThrottle = clamp(options.throttleFraction, 0, 1);
+  const cloaked = options.cloaked === true;
+  const cloakChargeFraction = clamp(options.cloakChargeFraction ?? 0, 0, 1);
+  const ringColor = cloaked ? style.cloaked.ringColor : style.ringColor;
+  const ringAlpha = cloaked ? style.cloaked.ringAlpha : style.ringAlpha;
+  const tickAlpha = cloaked ? style.cloaked.tickAlpha : style.tickAlpha;
+  const markerColor = cloaked ? style.cloaked.markerColor : style.progradeMarkerColor;
+  const markerAlpha = cloaked ? style.cloaked.markerAlpha : style.progradeMarkerAlpha;
+  const arrowColor = cloaked ? style.cloaked.arrowColor : style.arrowColor;
+  const arrowAlpha = cloaked ? style.cloaked.arrowAlpha : style.arrowAlpha;
 
   graphics.circle(options.origin.x, options.origin.y, radius);
   graphics.stroke({
-    color: style.ringColor,
+    color: ringColor,
     width: style.ringWidth * scale,
-    alpha: style.ringAlpha,
+    alpha: ringAlpha,
   });
 
   graphics.circle(options.origin.x, options.origin.y, innerRadius);
   graphics.stroke({
-    color: style.ringColor,
+    color: ringColor,
     width: style.ringWidth * scale,
-    alpha: style.innerRingAlpha,
+    alpha: style.innerRingAlpha * (cloaked ? 1.4 : 1),
   });
 
-  if (options.boosted) {
+  if (options.boosted && !cloaked) {
     graphics.circle(options.origin.x, options.origin.y, radius + 4 * scale);
     graphics.stroke({
-      color: style.arrowColor,
+      color: arrowColor,
       width: style.boostHaloWidth * scale,
       alpha: style.boostHaloAlpha,
     });
@@ -460,9 +471,9 @@ export function drawEngineCompass(
     graphics.moveTo(innerX, innerY);
     graphics.lineTo(outerX, outerY);
     graphics.stroke({
-      color: style.ringColor,
+      color: ringColor,
       width: style.tickWidth * scale,
-      alpha: style.tickAlpha,
+      alpha: tickAlpha,
       cap: "round",
     });
   }
@@ -489,15 +500,41 @@ export function drawEngineCompass(
     progradeBaseY - progradeNormalY * progradeHalfWidth,
   ]);
   graphics.fill({
-    color: style.progradeMarkerColor,
-    alpha: style.progradeMarkerAlpha,
+    color: markerColor,
+    alpha: markerAlpha,
   });
 
   graphics.circle(options.origin.x, options.origin.y, style.centerRadius * scale);
   graphics.fill({
-    color: style.arrowColor,
-    alpha: style.arrowAlpha,
+    color: arrowColor,
+    alpha: arrowAlpha,
   });
+
+  if (cloaked && cloakChargeFraction > 0) {
+    const chargeRadius = radius + style.cloaked.chargeRadiusOffset * scale;
+    const chargeStartAngle = options.referenceHeading - Math.PI / 2;
+    const chargeEndAngle = chargeStartAngle + Math.PI * 2 * cloakChargeFraction;
+    if (cloakChargeFraction >= 0.999) {
+      graphics.circle(options.origin.x, options.origin.y, chargeRadius);
+    } else {
+      const chargeStartX = options.origin.x + Math.cos(chargeStartAngle) * chargeRadius;
+      const chargeStartY = options.origin.y + Math.sin(chargeStartAngle) * chargeRadius;
+      graphics.moveTo(chargeStartX, chargeStartY);
+      graphics.arc(
+        options.origin.x,
+        options.origin.y,
+        chargeRadius,
+        chargeStartAngle,
+        chargeEndAngle,
+      );
+    }
+    graphics.stroke({
+      color: style.cloaked.chargeColor,
+      width: style.cloaked.chargeWidth * scale,
+      alpha: style.cloaked.chargeAlpha,
+      cap: "round",
+    });
+  }
 
   if (options.gravityHeading !== null) {
     drawCompassArrow(graphics, {
@@ -506,9 +543,9 @@ export function drawEngineCompass(
       length: style.gravityLength * scale,
       headLength: style.gravityHeadLength * scale,
       headWidth: style.gravityHeadWidth * scale,
-      color: style.gravityColor,
+      color: cloaked ? markerColor : style.gravityColor,
       width: style.gravityWidth * scale,
-      alpha: style.gravityAlpha,
+      alpha: cloaked ? Math.min(style.gravityAlpha, 0.68) : style.gravityAlpha,
     });
   }
 
@@ -523,9 +560,27 @@ export function drawEngineCompass(
       length: arrowLength,
       headLength: style.headLength * scale,
       headWidth: style.headWidth * scale,
-      color: style.arrowColor,
+      color: arrowColor,
       width: style.arrowWidth * scale,
-      alpha: style.arrowAlpha,
+      alpha: arrowAlpha,
+    });
+  }
+
+  if (cloaked) {
+    const slashLength = (radius + 7 * scale) * Math.SQRT1_2;
+    graphics.moveTo(
+      options.origin.x - slashLength,
+      options.origin.y - slashLength,
+    );
+    graphics.lineTo(
+      options.origin.x + slashLength,
+      options.origin.y + slashLength,
+    );
+    graphics.stroke({
+      color: style.cloaked.slashColor,
+      width: style.cloaked.slashWidth * scale,
+      alpha: style.cloaked.slashAlpha,
+      cap: "round",
     });
   }
 }

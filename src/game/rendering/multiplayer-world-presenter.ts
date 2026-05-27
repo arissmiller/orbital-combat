@@ -429,52 +429,100 @@ function drawPlayerExplosion(
 ): void {
   graphics.clear();
 
-  const t = Math.min(1, elapsedSeconds / EXPLOSION_DURATION_SECONDS);
-  const easeOut = 1 - (1 - t) * (1 - t);
+  const t = clamp(elapsedSeconds / EXPLOSION_DURATION_SECONDS, 0, 1);
+  const blast = 1 - (1 - t) * (1 - t) * (1 - t);
   const alpha = 1 - t;
+  const flicker = 0.88 + 0.12 * Math.sin(elapsedSeconds * 28);
 
-  // Shockwave ring — fast-expanding thin circle
-  const shockRadius = 12 + easeOut * 120;
-  const shockAlpha = Math.max(0, 0.6 - t * 2.2);
-  if (shockAlpha > 0) {
+  const shockRadius = 10 + blast * 132;
+  const shockAlpha = Math.max(0, 0.78 * alpha * alpha);
+  if (shockAlpha > 0.01) {
     graphics.circle(cx, cy, shockRadius);
-    graphics.stroke({ color: 0xfff2bf, width: 2, alpha: shockAlpha });
-  }
-
-  // Outer bloom
-  const outerRadius = 16 + easeOut * 80;
-  graphics.circle(cx, cy, outerRadius);
-  graphics.fill({
-    color: WORLD_ENTITY_STYLES.explosions.ship.outerColor,
-    alpha: alpha * WORLD_ENTITY_STYLES.explosions.ship.outerAlpha * 1.4,
-  });
-
-  // Inner core — fades quickly
-  const innerAlpha = Math.max(0, 1 - t * 2.5);
-  if (innerAlpha > 0) {
-    const innerRadius = 6 + easeOut * 22;
-    graphics.circle(cx, cy, innerRadius);
-    graphics.fill({
-      color: WORLD_ENTITY_STYLES.explosions.ship.innerColor,
-      alpha: innerAlpha * WORLD_ENTITY_STYLES.explosions.ship.innerAlpha,
+    graphics.stroke({
+      color: 0xffe8c4,
+      width: 2.4 - t * 1.2,
+      alpha: shockAlpha * flicker,
     });
   }
 
-  // Debris shards — 12 pieces in two rings
-  const shardCount = 12;
-  const shardBaseAngle = easeOut * 4;
-  for (let i = 0; i < shardCount; i += 1) {
-    const angle = shardBaseAngle + (i / shardCount) * Math.PI * 2;
-    // Alternate inner/outer ring
-    const ring = i % 2 === 0 ? 1 : 0.55;
-    const dist = (14 + easeOut * 58) * ring;
-    const sx = cx + Math.cos(angle) * dist;
-    const sy = cy + Math.sin(angle) * dist;
-    const shardRadius = Math.max(1, (4.5 - t * 3.5) * (ring > 0.8 ? 1 : 0.7));
-    graphics.circle(sx, sy, shardRadius);
+  if (t > 0.16) {
+    const t2 = (t - 0.16) / 0.84;
+    const secondaryRadius = 18 + clamp(t2, 0, 1) * 104;
+    const secondaryAlpha = Math.max(0, 0.34 * (1 - t2) * alpha);
+    if (secondaryAlpha > 0.01) {
+      graphics.circle(cx, cy, secondaryRadius);
+      graphics.stroke({
+        color: 0xffb86f,
+        width: 1.8 - clamp(t2, 0, 1) * 0.9,
+        alpha: secondaryAlpha,
+      });
+    }
+  }
+
+  const lobeCount = 4;
+  for (let lobe = 0; lobe < lobeCount; lobe += 1) {
+    const angle = t * 2.7 + (lobe / lobeCount) * Math.PI * 2;
+    const drift = 4 + lobe * 2.4;
+    const offset = 2 + blast * drift;
+    const lobeX = cx + Math.cos(angle) * offset;
+    const lobeY = cy + Math.sin(angle) * offset;
+    const lobeRadius = 14 + blast * (62 + lobe * 7);
+    graphics.circle(lobeX, lobeY, lobeRadius);
+    graphics.fill({
+      color: WORLD_ENTITY_STYLES.explosions.ship.outerColor,
+      alpha: alpha * (0.2 + lobe * 0.03),
+    });
+  }
+
+  const innerAlpha = Math.max(0, 1 - t * 2.7);
+  if (innerAlpha > 0.01) {
+    const innerRadius = 6 + blast * 28;
+    graphics.circle(cx, cy, innerRadius);
+    graphics.fill({
+      color: WORLD_ENTITY_STYLES.explosions.ship.innerColor,
+      alpha: innerAlpha * WORLD_ENTITY_STYLES.explosions.ship.innerAlpha * flicker,
+    });
+  }
+
+  const streakCount = 14;
+  for (let index = 0; index < streakCount; index += 1) {
+    const baseAngle = (index / streakCount) * Math.PI * 2;
+    const wobble = Math.sin(elapsedSeconds * (5.6 + index * 0.21) + index * 0.6) * 0.16;
+    const angle = baseAngle + blast * 2.8 + wobble;
+    const ringWeight = index % 3 === 0 ? 1 : index % 3 === 1 ? 0.72 : 0.54;
+    const travel = (20 + blast * 84) * ringWeight;
+    const tipX = cx + Math.cos(angle) * travel;
+    const tipY = cy + Math.sin(angle) * travel;
+    const tailLength = (10 + (1 - t) * 10) * ringWeight;
+    const tailX = tipX - Math.cos(angle) * tailLength;
+    const tailY = tipY - Math.sin(angle) * tailLength;
+    const streakAlpha = alpha * (0.28 + 0.22 * ringWeight);
+    graphics.moveTo(tailX, tailY);
+    graphics.lineTo(tipX, tipY);
+    graphics.stroke({
+      color: 0xffa25f,
+      width: 1.7 * ringWeight,
+      alpha: streakAlpha,
+      cap: "round",
+    });
+    const emberRadius = Math.max(0.8, (3.2 - t * 2.5) * ringWeight);
+    graphics.circle(tipX, tipY, emberRadius);
     graphics.fill({
       color: WORLD_ENTITY_STYLES.explosions.ship.shardColor,
-      alpha: alpha * WORLD_ENTITY_STYLES.explosions.ship.shardAlpha,
+      alpha: alpha * WORLD_ENTITY_STYLES.explosions.ship.shardAlpha * (0.62 + 0.38 * ringWeight),
+    });
+  }
+
+  const sparkCount = 8;
+  for (let spark = 0; spark < sparkCount; spark += 1) {
+    const angle = (spark / sparkCount) * Math.PI * 2 + t * 5.4;
+    const dist = 8 + blast * (26 + spark * 4);
+    const sx = cx + Math.cos(angle) * dist;
+    const sy = cy + Math.sin(angle) * dist;
+    graphics.circle(sx, sy, Math.max(0.7, 2.2 - t * 1.7));
+    graphics.fill({
+      color: 0xfff2cd,
+      alpha: Math.max(0, 0.65 - t * 0.78),
     });
   }
 }

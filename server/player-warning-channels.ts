@@ -4,6 +4,7 @@ import type {
   SimPlayerWarning,
 } from "./protocol.js";
 import type { MultiplayerSimPlayerState } from "../shared/multiplayer-simulation-core.js";
+import { isPlayerCloaked } from "../shared/multiplayer-simulation-core.js";
 
 const ENEMY_TARGETING_BASE_RANGE = 280;
 const ENEMY_TARGETING_BOOST_RANGE_MULTIPLIER = 1.75;
@@ -39,7 +40,11 @@ function addEnemyTargetingWarnings(
   channels: Map<string, SimPlayerWarning[]>,
 ): void {
   for (const attacker of players.values()) {
-    if (attacker.life?.alive === false || attacker.weaponFiring !== true) {
+    if (
+      attacker.life?.alive === false ||
+      attacker.weaponFiring !== true ||
+      isPlayerCloaked(attacker)
+    ) {
       continue;
     }
 
@@ -47,6 +52,9 @@ function addEnemyTargetingWarnings(
 
     for (const target of players.values()) {
       if (target.playerId === attacker.playerId || target.life?.alive === false) {
+        continue;
+      }
+      if (isPlayerCloaked(target)) {
         continue;
       }
 

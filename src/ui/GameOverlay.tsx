@@ -2,6 +2,7 @@ import type { ReactElement } from "react";
 import {
   type OverlayBriefingState,
   type OverlayMeterState,
+  type OverlayMultiplayerEventState,
   type OverlayMissionStepState,
   type OverlayScoreboardState,
   type OverlaySystemPanelState,
@@ -18,7 +19,7 @@ export function GameOverlay(): ReactElement | null {
   }
 
   return (
-    <div className="game-overlay">
+    <div className={`game-overlay ${overlayState.showLeaveGameButton ? "game-overlay--multiplayer" : ""}`}>
       <header className="game-overlay__top">
         <div className="game-overlay__top-center-stack">
           <h1 className="game-overlay__title">{overlayState.title}</h1>
@@ -60,25 +61,47 @@ export function GameOverlay(): ReactElement | null {
             ))}
           </div>
         ) : null}
+        {overlayState.multiplayerEvents.length > 0 ? (
+          <div className="game-overlay__event-log-row">
+            <MultiplayerEventLogPanel events={overlayState.multiplayerEvents} />
+          </div>
+      ) : null}
         <div className="game-overlay__status-cluster">
-          {overlayState.vitals ? (
-            <div className="game-overlay__vitals">
-              <VitalsPanel
+          {overlayState.vitals || overlayState.systems.length > 0 ? (
+            <div className="game-overlay__ship-status">
+              <ShipStatusPanel
                 vitals={overlayState.vitals}
-                defensesBoosted={
-                  overlayState.systems.find((system) => system.key === "defenses")?.boosted ?? false
-                }
+                systems={overlayState.systems}
               />
             </div>
           ) : null}
-          <div className="game-overlay__systems">
-            {overlayState.systems.map((system) => (
-              <SystemPanel key={system.key} system={system} />
-            ))}
-          </div>
         </div>
       </div>
     </div>
+  );
+}
+
+function MultiplayerEventLogPanel(props: {
+  events: OverlayMultiplayerEventState[];
+}): ReactElement {
+  const { events } = props;
+  return (
+    <section
+      className="game-panel game-panel--event-log"
+      style={createPanelStyle("#ffc86a")}
+    >
+      <div className="game-panel__badge">Multiplayer Feed</div>
+      <div className="game-event-log__entries">
+        {events.map((event) => (
+          <div
+            key={event.id}
+            className={`game-event-log__entry game-event-log__entry--${event.tone}`}
+          >
+            {event.text}
+          </div>
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -280,15 +303,25 @@ function BriefingVisual(props: {
   }
 }
 
-function VitalsPanel(props: {
-  vitals: OverlayVitalsState;
-  defensesBoosted: boolean;
+function ShipStatusPanel(props: {
+  vitals: OverlayVitalsState | null;
+  systems: OverlaySystemPanelState[];
 }): ReactElement {
-  const { vitals, defensesBoosted } = props;
-  const healthFraction = vitals.maxHealth > 0 ? vitals.health / vitals.maxHealth : 0;
-  const shieldFraction = vitals.shieldMaxCharge > 0
+  const { vitals, systems } = props;
+  const focusedSystemKey = systems.find((system) => system.boosted)?.key ?? null;
+  const defensesBoosted = systems.find((system) => system.key === "defenses")?.boosted ?? false;
+  const enginesSystem = systems.find((system) => system.key === "engines");
+  const weaponsSystem = systems.find((system) => system.key === "weapons");
+  const enginesMeter = enginesSystem
+    ? enginesSystem.meters[Math.max(enginesSystem.meters.length - 1, 0)] ?? null
+    : null;
+  const weaponsMeter = weaponsSystem?.meters[0] ?? null;
+  const healthFraction = vitals && vitals.maxHealth > 0 ? vitals.health / vitals.maxHealth : 0;
+  const shieldFraction = vitals && vitals.shieldMaxCharge > 0
     ? vitals.shieldCharge / vitals.shieldMaxCharge
     : 0;
+  const enginesFraction = enginesMeter ? enginesMeter.value : 0;
+  const weaponsFraction = weaponsMeter ? weaponsMeter.value : 0;
   const boostedShieldCapacityMultiplier = 1.5;
   const activeShieldCapacityMultiplier = defensesBoosted ? boostedShieldCapacityMultiplier : 1;
   const effectiveShieldCapacityFraction = Math.max(
@@ -299,23 +332,42 @@ function VitalsPanel(props: {
     ),
   );
   const healthColor = healthFraction > 0.6 ? "#6ae78c" : healthFraction > 0.3 ? "#ffbd59" : "#ff7b72";
+  const enginesColor = enginesMeter?.fillColor ?? "#ffbd59";
+  const weaponsColor = weaponsMeter?.fillColor ?? "#ff7b72";
+  const focusedLabel = formatFocusedSystemLabel(focusedSystemKey);
+  const hullValueText = vitals
+    ? `${Math.round(vitals.health)} / ${Math.round(vitals.maxHealth)}`
+    : "N/A";
+  const shieldValueText = vitals
+    ? `${Math.round(effectiveShieldCapacityFraction * 100)}% CAP`
+    : "N/A";
+  const enginesValueText = enginesMeter
+    ? `${Math.round(clamp01(enginesFraction) * 100)}% CHG`
+    : "N/A";
+  const weaponsValueText = weaponsMeter
+    ? `${Math.round(clamp01(weaponsFraction) * 100)}% CHG`
+    : "N/A";
+
   return (
     <section
-      className="game-panel game-panel--vitals"
+      className="game-panel game-panel--ship-status"
       style={{
         ...createPanelStyle("#78e8ff"),
         ["--vitals-health-color" as string]: healthColor,
         ["--vitals-shield-color" as string]: "#78e8ff",
+        ["--vitals-engines-color" as string]: enginesColor,
+        ["--vitals-weapons-color" as string]: weaponsColor,
       }}
     >
-      <div className="game-panel__badge">Ship Vitals</div>
+      <div className="game-panel__badge">Ship Status</div>
+      <div className="game-vitals__focus-line">
+        Focus: <span className="game-vitals__focus-value">{focusedLabel}</span>
+      </div>
       <div className="game-vitals__groups">
         <div className="game-vitals__group game-vitals__group--health">
           <div className="game-vitals__row">
             <span className="game-vitals__label">Hull</span>
-            <span className="game-vitals__value">
-              {Math.round(vitals.health)} / {Math.round(vitals.maxHealth)}
-            </span>
+            <span className="game-vitals__value">{hullValueText}</span>
           </div>
           <Meter
             meter={{
@@ -325,12 +377,19 @@ function VitalsPanel(props: {
             }}
           />
         </div>
-        <div className="game-vitals__group game-vitals__group--shield">
+        <div
+          className={`game-vitals__group game-vitals__group--shield ${
+            focusedSystemKey === "defenses" ? "is-focused" : ""
+          }`}
+        >
           <div className="game-vitals__row">
-            <span className="game-vitals__label">Shield</span>
-            <span className="game-vitals__value">
-              {Math.round(effectiveShieldCapacityFraction * 100)}% CAP
+            <span className="game-vitals__label-wrap">
+              <span className="game-vitals__label">Shield</span>
+              {focusedSystemKey === "defenses" ? (
+                <span className="game-vitals__focus-pill">Focus</span>
+              ) : null}
             </span>
+            <span className="game-vitals__value">{shieldValueText}</span>
           </div>
           <Meter
             meter={{
@@ -340,28 +399,72 @@ function VitalsPanel(props: {
             }}
           />
         </div>
+        <div
+          className={`game-vitals__group game-vitals__group--engines ${
+            focusedSystemKey === "engines" ? "is-focused" : ""
+          }`}
+        >
+          <div className="game-vitals__row">
+            <span className="game-vitals__label-wrap">
+              <span className="game-vitals__label">Engines</span>
+              {focusedSystemKey === "engines" ? (
+                <span className="game-vitals__focus-pill">Focus</span>
+              ) : null}
+            </span>
+            <span className="game-vitals__value">{enginesValueText}</span>
+          </div>
+          <Meter
+            meter={{
+              value: enginesFraction,
+              fillColor: enginesMeter?.fillColor ?? "#ffbd59",
+              backgroundColor: enginesMeter?.backgroundColor ?? "#2c2212",
+            }}
+          />
+        </div>
+        <div
+          className={`game-vitals__group game-vitals__group--weapons ${
+            focusedSystemKey === "weapons" ? "is-focused" : ""
+          }`}
+        >
+          <div className="game-vitals__row">
+            <span className="game-vitals__label-wrap">
+              <span className="game-vitals__label">Weapons</span>
+              {focusedSystemKey === "weapons" ? (
+                <span className="game-vitals__focus-pill">Focus</span>
+              ) : null}
+            </span>
+            <span className="game-vitals__value">{weaponsValueText}</span>
+          </div>
+          <Meter
+            meter={{
+              value: weaponsFraction,
+              fillColor: weaponsMeter?.fillColor ?? "#ff7b72",
+              backgroundColor: weaponsMeter?.backgroundColor ?? "#2d1519",
+            }}
+          />
+        </div>
       </div>
     </section>
   );
 }
 
-function SystemPanel(props: {
-  system: OverlaySystemPanelState;
-}): ReactElement {
-  const { system } = props;
-  return (
-    <section
-      className={`game-panel game-panel--system ${system.boosted ? "game-panel--boosted" : ""}`}
-      style={createPanelStyle(system.accentColor)}
-    >
-      <div className="game-panel__badge">{system.title}</div>
-      <div className="game-panel__meters">
-        {system.meters.map((meter, index) => (
-          <Meter key={`${system.key}-${index}`} meter={meter} />
-        ))}
-      </div>
-    </section>
-  );
+function formatFocusedSystemLabel(systemKey: string | null): string {
+  switch (systemKey) {
+    case "engines":
+      return "Engines";
+    case "scanners":
+      return "Scanners";
+    case "weapons":
+      return "Weapons";
+    case "defenses":
+      return "Shield";
+    default:
+      return "None";
+  }
+}
+
+function clamp01(value: number): number {
+  return Math.max(0, Math.min(1, value));
 }
 
 function MissionPanel(props: {

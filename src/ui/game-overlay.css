@@ -221,8 +221,16 @@
   gap: 12px;
 }
 
-.game-overlay__vitals {
-  width: min(100%, 360px);
+.game-overlay__ship-status {
+  width: min(100%, 420px);
+}
+
+.game-overlay--multiplayer .game-overlay__status-cluster {
+  align-items: flex-end;
+}
+
+.game-overlay--multiplayer .game-overlay__ship-status {
+  width: min(100%, 420px);
 }
 
 .game-overlay__warning-stack {
@@ -230,6 +238,21 @@
   flex-direction: column;
   align-items: center;
   gap: 6px;
+}
+
+.game-overlay__event-log-row {
+  width: 100%;
+  display: flex;
+  justify-content: flex-start;
+}
+
+.game-overlay--multiplayer .game-overlay__event-log-row {
+  position: fixed;
+  top: 24px;
+  left: 24px;
+  width: min(480px, calc(100vw - 48px));
+  align-self: auto;
+  z-index: 8;
 }
 
 .game-overlay__systems {
@@ -355,6 +378,35 @@
   border-width: 2px;
 }
 
+.game-panel--ship-status {
+  --vitals-health-color: #6ae78c;
+  --vitals-shield-color: #78e8ff;
+  --vitals-engines-color: #ffbd59;
+  --vitals-weapons-color: #ff7b72;
+  min-height: 248px;
+  padding-top: 46px;
+  background:
+    radial-gradient(circle at 18% 6%, rgba(120, 232, 255, 0.16), rgba(120, 232, 255, 0) 44%),
+    linear-gradient(180deg, rgba(8, 18, 30, 0.94), rgba(6, 13, 23, 0.92));
+  border-style: solid;
+  border-width: 2px;
+}
+
+.game-vitals__focus-line {
+  margin-bottom: 10px;
+  font-family: "Menlo", "Monaco", monospace;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.4;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #9bc5d6;
+}
+
+.game-vitals__focus-value {
+  color: #f4fdff;
+}
+
 .game-vitals__groups {
   display: flex;
   flex-direction: column;
@@ -367,10 +419,23 @@
   gap: 6px;
 }
 
+.game-vitals__group.is-focused {
+  padding: 6px 8px;
+  border-radius: 10px;
+  border: 1px solid rgba(142, 232, 255, 0.26);
+  background: rgba(142, 232, 255, 0.08);
+}
+
 .game-vitals__row {
   display: flex;
   justify-content: space-between;
   align-items: baseline;
+  gap: 8px;
+}
+
+.game-vitals__label-wrap {
+  display: inline-flex;
+  align-items: center;
   gap: 8px;
 }
 
@@ -400,6 +465,28 @@
   color: var(--vitals-shield-color);
 }
 
+.game-vitals__group--engines .game-vitals__value {
+  color: var(--vitals-engines-color);
+}
+
+.game-vitals__group--weapons .game-vitals__value {
+  color: var(--vitals-weapons-color);
+}
+
+.game-vitals__focus-pill {
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid rgba(142, 232, 255, 0.38);
+  background: rgba(142, 232, 255, 0.12);
+  color: #dff8ff;
+  font-family: "Menlo", "Monaco", monospace;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.09em;
+  line-height: 1.6;
+  text-transform: uppercase;
+}
+
 .game-panel--scoreboard {
   min-height: auto;
   width: min(100%, 320px);
@@ -408,6 +495,14 @@
   flex-direction: column;
   gap: 10px;
   background: rgba(10, 18, 30, 0.84);
+}
+
+.game-panel--event-log {
+  width: min(100%, 480px);
+  min-height: 136px;
+  padding: 42px 16px 14px;
+  background:
+    linear-gradient(180deg, rgba(18, 31, 51, 0.54), rgba(8, 15, 24, 0.6));
 }
 
 .game-panel--boosted {
@@ -463,6 +558,37 @@
   line-height: 1.1;
   font-weight: 800;
   color: #f4fdff;
+}
+
+.game-event-log__entries {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 160px;
+  overflow: hidden;
+}
+
+.game-event-log__entry {
+  font-family: "Menlo", "Monaco", monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  letter-spacing: 0.04em;
+  color: #d8f0ff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.game-event-log__entry--combat {
+  color: #ffb7ae;
+}
+
+.game-event-log__entry--error {
+  color: #ff8c80;
+}
+
+.game-event-log__entry--system {
+  color: #cfe8f7;
 }
 
 .game-mission__instruction {
@@ -602,16 +728,22 @@
     padding: 18px;
   }
 
-  .game-overlay__systems {
-    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-  }
-
-  .game-overlay__vitals {
-    width: min(100%, 320px);
+  .game-overlay__ship-status {
+    width: min(100%, 360px);
   }
 
   .game-overlay__warning-banner {
     font-size: 18px;
+  }
+
+  .game-panel--event-log {
+    width: min(100%, 420px);
+  }
+}
+
+@media (max-width: 900px) {
+  .game-overlay--multiplayer .game-overlay__status-cluster {
+    align-items: center;
   }
 }
 
@@ -628,8 +760,18 @@
     grid-template-columns: 1fr;
   }
 
-  .game-overlay__systems {
-    grid-template-columns: 1fr 1fr;
+  .game-overlay__event-log-row {
+    justify-content: center;
+  }
+
+  .game-overlay--multiplayer .game-overlay__event-log-row {
+    top: 18px;
+    left: 18px;
+    width: calc(100vw - 36px);
+  }
+
+  .game-panel--event-log {
+    width: 100%;
   }
 
   .game-overlay__title {

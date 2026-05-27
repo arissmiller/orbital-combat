@@ -9,6 +9,14 @@ export const DEFAULT_MAX_PLAYERS = 4;
 export const ROOM_CODE_LENGTH = 6;
 export type ShipSubsystemKey = "engines" | "scanners" | "weapons" | "defenses";
 export type PlayerWeaponMode = "disintegrator" | "disruptor";
+export type SimCombatEventType =
+  | "lock-acquiring"
+  | "lock-acquired"
+  | "weapon-firing"
+  | "shield-hit"
+  | "hull-hit"
+  | "ship-destroyed";
+export type SimCombatEventCause = "weapon" | "collision";
 
 export type ClientMessage =
   | {
@@ -49,6 +57,8 @@ export type ClientMessage =
       focusSubsystem?: ShipSubsystemKey;
       weaponArmed?: boolean;
       weaponMode?: PlayerWeaponMode;
+      targetPlayerId?: string | null;
+      cloakActive?: boolean;
     }
   | {
       type: "ping";
@@ -112,6 +122,9 @@ export interface SimPlayerSnapshot {
   weaponArmed?: boolean;
   weaponMode?: PlayerWeaponMode;
   weaponFiring?: boolean;
+  cloakActive?: boolean;
+  cloakCharge?: number;
+  cloakMaxCharge?: number;
 }
 
 export interface SimPlayerSubsystemSnapshot {
@@ -151,6 +164,21 @@ export interface SimPlayerScannerSnapshot {
   contacts: SimPlayerScannerContactSnapshot[];
 }
 
+export interface SimCombatEventSnapshot {
+  id: string;
+  type: SimCombatEventType;
+  attackerPlayerId?: string;
+  targetPlayerId: string;
+  weaponMode?: PlayerWeaponMode;
+  cause?: SimCombatEventCause;
+  lockProgress?: number;
+  strength?: number;
+  shieldDamage?: number;
+  hullDamage?: number;
+  targetHealth?: number;
+  targetShieldCharge?: number;
+}
+
 export type { SimCelestialBodySnapshot } from "./multiplayer-map.js";
 
 export interface SimulationSnapshot {
@@ -160,6 +188,7 @@ export interface SimulationSnapshot {
   players: SimPlayerSnapshot[];
   mapId?: string;
   celestialBodies?: SimCelestialBodySnapshot[];
+  combatEvents?: SimCombatEventSnapshot[];
 }
 
 export type ServerMessage =
@@ -215,6 +244,8 @@ export interface PlayerInputCommand {
   focusSubsystem?: ShipSubsystemKey;
   weaponArmed?: boolean;
   weaponMode?: PlayerWeaponMode;
+  targetPlayerId?: string | null;
+  cloakActive?: boolean;
 }
 
 export function parseClientMessage(raw: unknown): ClientMessage | null {
@@ -290,6 +321,14 @@ export function parseClientMessage(raw: unknown): ClientMessage | null {
       if (message.weaponArmed !== undefined && weaponArmed === undefined) {
         return null;
       }
+      const cloakActive = parseOptionalBoolean(message.cloakActive);
+      if (message.cloakActive !== undefined && cloakActive === undefined) {
+        return null;
+      }
+      const targetPlayerId = parseOptionalNullableString(message.targetPlayerId);
+      if (message.targetPlayerId !== undefined && targetPlayerId === undefined) {
+        return null;
+      }
 
       return {
         type: "input",
@@ -306,6 +345,8 @@ export function parseClientMessage(raw: unknown): ClientMessage | null {
         focusSubsystem: focusSubsystem ?? undefined,
         weaponArmed,
         weaponMode: weaponMode ?? undefined,
+        targetPlayerId,
+        cloakActive,
       };
     }
     case "ping": {
@@ -605,6 +646,9 @@ function parseSimulationSnapshot(raw: unknown): SimulationSnapshot | null {
       weaponArmed: parseOptionalBoolean(playerSnapshot.weaponArmed),
       weaponMode: parseOptionalPlayerWeaponMode(playerSnapshot.weaponMode),
       weaponFiring: parseOptionalBoolean(playerSnapshot.weaponFiring),
+      cloakActive: parseOptionalBoolean(playerSnapshot.cloakActive),
+      cloakCharge: parseOptionalNumber(playerSnapshot.cloakCharge),
+      cloakMaxCharge: parseOptionalNumber(playerSnapshot.cloakMaxCharge),
     });
   }
 
@@ -632,6 +676,8 @@ function parseSimulationSnapshot(raw: unknown): SimulationSnapshot | null {
     }
   }
 
+  const combatEvents = parseOptionalSimCombatEvents(snapshot.combatEvents);
+
   return {
     roomCode: snapshot.roomCode,
     tick: snapshot.tick,
@@ -639,6 +685,7 @@ function parseSimulationSnapshot(raw: unknown): SimulationSnapshot | null {
     players,
     mapId,
     celestialBodies,
+    combatEvents,
   };
 }
 
@@ -733,6 +780,23 @@ function parseOptionalNullableNumber(value: unknown): number | null | undefined 
   return undefined;
 }
 
+function parseOptionalNullableString(value: unknown): string | null | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value === null || typeof value === "string") {
+    return value;
+  }
+  return undefined;
+}
+
+function parseOptionalString(value: unknown): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  return typeof value === "string" ? value : undefined;
+}
+
 function parseOptionalBoolean(value: unknown): boolean | undefined {
   if (value === undefined) {
     return undefined;
@@ -747,6 +811,26 @@ function parseOptionalPlayerWeaponMode(
     return undefined;
   }
   return parsePlayerWeaponMode(value) ?? undefined;
+}
+
+function parseSimCombatEventType(value: unknown): SimCombatEventType | null {
+  return value === "lock-acquiring"
+    || value === "lock-acquired"
+    || value === "weapon-firing"
+    || value === "shield-hit"
+    || value === "hull-hit"
+    || value === "ship-destroyed"
+    ? value
+    : null;
+}
+
+function parseOptionalSimCombatEventCause(
+  value: unknown,
+): SimCombatEventCause | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  return value === "weapon" || value === "collision" ? value : undefined;
 }
 
 function parseOptionalSimPlayerSystemsSnapshot(
@@ -808,6 +892,51 @@ function parseOptionalSimPlayerWarnings(
     }
   }
   return warnings;
+}
+
+function parseOptionalSimCombatEvents(
+  value: unknown,
+): SimCombatEventSnapshot[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const events: SimCombatEventSnapshot[] = [];
+  for (const item of value) {
+    const event = parseSimCombatEventSnapshot(item);
+    if (!event) {
+      continue;
+    }
+    events.push(event);
+  }
+  return events;
+}
+
+function parseSimCombatEventSnapshot(
+  value: unknown,
+): SimCombatEventSnapshot | null {
+  if (typeof value !== "object" || value === null) {
+    return null;
+  }
+  const event = value as Record<string, unknown>;
+  const type = parseSimCombatEventType(event.type);
+  if (!type || typeof event.id !== "string" || typeof event.targetPlayerId !== "string") {
+    return null;
+  }
+
+  return {
+    id: event.id,
+    type,
+    attackerPlayerId: parseOptionalString(event.attackerPlayerId),
+    targetPlayerId: event.targetPlayerId,
+    weaponMode: parseOptionalPlayerWeaponMode(event.weaponMode),
+    cause: parseOptionalSimCombatEventCause(event.cause),
+    lockProgress: parseOptionalNumber(event.lockProgress),
+    strength: parseOptionalNumber(event.strength),
+    shieldDamage: parseOptionalNumber(event.shieldDamage),
+    hullDamage: parseOptionalNumber(event.hullDamage),
+    targetHealth: parseOptionalNumber(event.targetHealth),
+    targetShieldCharge: parseOptionalNumber(event.targetShieldCharge),
+  };
 }
 
 function parseOptionalSimPlayerScannerSnapshot(
