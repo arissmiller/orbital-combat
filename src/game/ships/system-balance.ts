@@ -18,6 +18,7 @@ export interface ShipSystemsBalance {
     thrustMultiplier: number;
     progradeRetrogradeThrustScale: number;
     lateralThrustScale: number;
+    cruiseOutputCeilingUnfocused: number;
     responseMultiplier: number;
     superBurnMultiplier: number;
     fuelBurnPerSecond: number;
@@ -50,6 +51,7 @@ export const SHIP_SYSTEMS_BALANCE: ShipSystemsBalance = {
     thrustMultiplier: 2,
     progradeRetrogradeThrustScale: 1,
     lateralThrustScale: 1,
+    cruiseOutputCeilingUnfocused: 1,
     responseMultiplier: 2,
     superBurnMultiplier: 2.8,
     fuelBurnPerSecond: 0.01,

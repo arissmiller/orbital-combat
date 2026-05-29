@@ -327,9 +327,23 @@
 .game-panel__meters {
   display: flex;
   flex-direction: column;
+  flex: 1 1 auto;
   justify-content: end;
   gap: 12px;
-  min-height: 100%;
+  min-height: 0;
+}
+
+.game-system__status {
+  margin: 4px 0 8px;
+  color: #b6d9e8;
+  font-family: "Menlo", "Monaco", monospace;
+  font-size: 10px;
+  line-height: 1.4;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .game-panel--mission {
@@ -363,6 +377,9 @@
 
 .game-panel--system {
   min-height: 138px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
   background: rgba(15, 22, 34, 0.78);
 }
 
@@ -383,7 +400,7 @@
   --vitals-shield-color: #78e8ff;
   --vitals-engines-color: #ffbd59;
   --vitals-weapons-color: #ff7b72;
-  min-height: 248px;
+  min-height: 136px;
   padding-top: 46px;
   background:
     radial-gradient(circle at 18% 6%, rgba(120, 232, 255, 0.16), rgba(120, 232, 255, 0) 44%),
@@ -439,6 +456,20 @@
   gap: 8px;
 }
 
+.game-vitals__keybind {
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid rgba(142, 232, 255, 0.3);
+  background: rgba(142, 232, 255, 0.08);
+  color: #9fd7ec;
+  font-family: "Menlo", "Monaco", monospace;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  line-height: 1.6;
+  text-transform: uppercase;
+}
+
 .game-vitals__label,
 .game-vitals__value {
   font-family: "Menlo", "Monaco", monospace;
@@ -473,6 +504,10 @@
   color: var(--vitals-weapons-color);
 }
 
+.game-vitals__group--cloak .game-vitals__value {
+  color: #89ffd5;
+}
+
 .game-vitals__focus-pill {
   padding: 1px 6px;
   border-radius: 999px;
@@ -485,6 +520,37 @@
   letter-spacing: 0.09em;
   line-height: 1.6;
   text-transform: uppercase;
+}
+
+.game-system__meter {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.game-system__row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.game-system__label,
+.game-system__value {
+  font-family: "Menlo", "Monaco", monospace;
+  font-size: 10px;
+  line-height: 1.4;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.game-system__label {
+  color: #97c3d6;
+}
+
+.game-system__value {
+  color: #f4fdff;
+  font-weight: 700;
 }
 
 .game-panel--scoreboard {

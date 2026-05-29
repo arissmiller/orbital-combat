@@ -14,7 +14,16 @@ export interface OverlayPanelState {
 
 export interface OverlaySystemPanelState extends OverlayPanelState {
   key: string;
+  hotkey: string;
   boosted: boolean;
+  statusText?: string;
+}
+
+export interface OverlayCloakState {
+  active: boolean;
+  charge: number;
+  maxCharge: number;
+  hotkey: string;
 }
 
 export interface OverlayMissionStepState {
@@ -105,6 +114,7 @@ export interface GameOverlayState {
   weaponAudio: OverlayWeaponAudioState | null;
   systems: OverlaySystemPanelState[];
   vitals: OverlayVitalsState | null;
+  cloak: OverlayCloakState | null;
   multiplayerEvents: OverlayMultiplayerEventState[];
 }
 
@@ -122,6 +132,7 @@ const DEFAULT_OVERLAY_STATE: GameOverlayState = {
   weaponAudio: null,
   systems: [],
   vitals: null,
+  cloak: null,
   multiplayerEvents: [],
 };
 
