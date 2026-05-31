@@ -122,20 +122,21 @@ jobs:
           echo "Checking health at $health_url"
 
           max_attempts=10
+          retry_delay=10
           attempt=1
 
           while [ "$attempt" -le "$max_attempts" ]; do
             response="$(curl --silent --show-error --location --max-time 10 "$health_url" || true)"
             echo "$response"
 
-            if echo "$response" | grep -q '"ok"[[:space:]]*:[[:space:]]*true'; then
+            if echo "$response" | jq -e '.ok == true' >/dev/null 2>&1; then
               echo "Health check passed."
               exit 0
             fi
 
             if [ "$attempt" -lt "$max_attempts" ]; then
-              echo "Service not healthy yet (attempt ${attempt}/${max_attempts}). Retrying in 10s..."
-              sleep 10
+              echo "Service not healthy yet (attempt ${attempt}/${max_attempts}). Retrying in ${retry_delay}s..."
+              sleep "$retry_delay"
             fi
 
             attempt=$((attempt + 1))
