@@ -1,6 +1,7 @@
 import type { ReactElement } from "react";
 import {
   type OverlayBriefingState,
+  type OverlayCloakState,
   type OverlayMeterState,
   type OverlayMultiplayerEventState,
   type OverlayMissionStepState,
@@ -67,7 +68,7 @@ export function GameOverlay(): ReactElement | null {
           </div>
       ) : null}
         <div className="game-overlay__status-cluster">
-          {overlayState.vitals || overlayState.systems.length > 0 ? (
+          {overlayState.vitals || overlayState.systems.length > 0 || overlayState.cloak ? (
             <div className="game-overlay__ship-status">
               <ShipStatusPanel
                 vitals={overlayState.vitals}
@@ -76,6 +77,12 @@ export function GameOverlay(): ReactElement | null {
             </div>
           ) : null}
         </div>
+        {overlayState.systems.length > 0 || overlayState.cloak ? (
+          <SystemPanelsRow
+            systems={overlayState.systems}
+            cloak={overlayState.cloak}
+          />
+        ) : null}
       </div>
     </div>
   );
@@ -308,44 +315,15 @@ function ShipStatusPanel(props: {
   systems: OverlaySystemPanelState[];
 }): ReactElement {
   const { vitals, systems } = props;
-  const focusedSystemKey = systems.find((system) => system.boosted)?.key ?? null;
-  const defensesBoosted = systems.find((system) => system.key === "defenses")?.boosted ?? false;
-  const enginesSystem = systems.find((system) => system.key === "engines");
-  const weaponsSystem = systems.find((system) => system.key === "weapons");
-  const enginesMeter = enginesSystem
-    ? enginesSystem.meters[Math.max(enginesSystem.meters.length - 1, 0)] ?? null
-    : null;
-  const weaponsMeter = weaponsSystem?.meters[0] ?? null;
+  const orderedSystems = [...systems].sort(compareSystemsByHotkey);
+  const focusedSystem = orderedSystems.find((system) => system.boosted) ?? null;
+  const focusedSystemKey = focusedSystem?.key ?? null;
   const healthFraction = vitals && vitals.maxHealth > 0 ? vitals.health / vitals.maxHealth : 0;
-  const shieldFraction = vitals && vitals.shieldMaxCharge > 0
-    ? vitals.shieldCharge / vitals.shieldMaxCharge
-    : 0;
-  const enginesFraction = enginesMeter ? enginesMeter.value : 0;
-  const weaponsFraction = weaponsMeter ? weaponsMeter.value : 0;
-  const boostedShieldCapacityMultiplier = 1.5;
-  const activeShieldCapacityMultiplier = defensesBoosted ? boostedShieldCapacityMultiplier : 1;
-  const effectiveShieldCapacityFraction = Math.max(
-    0,
-    Math.min(
-      1,
-      shieldFraction * (activeShieldCapacityMultiplier / boostedShieldCapacityMultiplier),
-    ),
-  );
   const healthColor = healthFraction > 0.6 ? "#6ae78c" : healthFraction > 0.3 ? "#ffbd59" : "#ff7b72";
-  const enginesColor = enginesMeter?.fillColor ?? "#ffbd59";
-  const weaponsColor = weaponsMeter?.fillColor ?? "#ff7b72";
   const focusedLabel = formatFocusedSystemLabel(focusedSystemKey);
+  const focusedBinding = focusedSystem?.hotkey ?? null;
   const hullValueText = vitals
     ? `${Math.round(vitals.health)} / ${Math.round(vitals.maxHealth)}`
-    : "N/A";
-  const shieldValueText = vitals
-    ? `${Math.round(effectiveShieldCapacityFraction * 100)}% CAP`
-    : "N/A";
-  const enginesValueText = enginesMeter
-    ? `${Math.round(clamp01(enginesFraction) * 100)}% CHG`
-    : "N/A";
-  const weaponsValueText = weaponsMeter
-    ? `${Math.round(clamp01(weaponsFraction) * 100)}% CHG`
     : "N/A";
 
   return (
@@ -354,14 +332,11 @@ function ShipStatusPanel(props: {
       style={{
         ...createPanelStyle("#78e8ff"),
         ["--vitals-health-color" as string]: healthColor,
-        ["--vitals-shield-color" as string]: "#78e8ff",
-        ["--vitals-engines-color" as string]: enginesColor,
-        ["--vitals-weapons-color" as string]: weaponsColor,
       }}
     >
       <div className="game-panel__badge">Ship Status</div>
       <div className="game-vitals__focus-line">
-        Focus: <span className="game-vitals__focus-value">{focusedLabel}</span>
+        Focus: <span className="game-vitals__focus-value">{focusedBinding ? `[${focusedBinding}] ${focusedLabel}` : focusedLabel}</span>
       </div>
       <div className="game-vitals__groups">
         <div className="game-vitals__group game-vitals__group--health">
@@ -377,75 +352,124 @@ function ShipStatusPanel(props: {
             }}
           />
         </div>
-        <div
-          className={`game-vitals__group game-vitals__group--shield ${
-            focusedSystemKey === "defenses" ? "is-focused" : ""
-          }`}
-        >
-          <div className="game-vitals__row">
-            <span className="game-vitals__label-wrap">
-              <span className="game-vitals__label">Shield</span>
-              {focusedSystemKey === "defenses" ? (
-                <span className="game-vitals__focus-pill">Focus</span>
-              ) : null}
-            </span>
-            <span className="game-vitals__value">{shieldValueText}</span>
-          </div>
-          <Meter
-            meter={{
-              value: effectiveShieldCapacityFraction,
-              fillColor: defensesBoosted ? "#78e8ff" : "#4ea7c5",
-              backgroundColor: "#0d1e2e",
-            }}
-          />
-        </div>
-        <div
-          className={`game-vitals__group game-vitals__group--engines ${
-            focusedSystemKey === "engines" ? "is-focused" : ""
-          }`}
-        >
-          <div className="game-vitals__row">
-            <span className="game-vitals__label-wrap">
-              <span className="game-vitals__label">Engines</span>
-              {focusedSystemKey === "engines" ? (
-                <span className="game-vitals__focus-pill">Focus</span>
-              ) : null}
-            </span>
-            <span className="game-vitals__value">{enginesValueText}</span>
-          </div>
-          <Meter
-            meter={{
-              value: enginesFraction,
-              fillColor: enginesMeter?.fillColor ?? "#ffbd59",
-              backgroundColor: enginesMeter?.backgroundColor ?? "#2c2212",
-            }}
-          />
-        </div>
-        <div
-          className={`game-vitals__group game-vitals__group--weapons ${
-            focusedSystemKey === "weapons" ? "is-focused" : ""
-          }`}
-        >
-          <div className="game-vitals__row">
-            <span className="game-vitals__label-wrap">
-              <span className="game-vitals__label">Weapons</span>
-              {focusedSystemKey === "weapons" ? (
-                <span className="game-vitals__focus-pill">Focus</span>
-              ) : null}
-            </span>
-            <span className="game-vitals__value">{weaponsValueText}</span>
-          </div>
-          <Meter
-            meter={{
-              value: weaponsFraction,
-              fillColor: weaponsMeter?.fillColor ?? "#ff7b72",
-              backgroundColor: weaponsMeter?.backgroundColor ?? "#2d1519",
-            }}
-          />
-        </div>
       </div>
     </section>
   );
+}
+
+function SystemPanelsRow(props: {
+  systems: OverlaySystemPanelState[];
+  cloak: OverlayCloakState | null;
+}): ReactElement {
+  const orderedSystems = [...props.systems].sort(compareSystemsByHotkey);
+
+  return (
+    <div className="game-overlay__systems">
+      {orderedSystems.map((system) => (
+        <section
+          key={system.key}
+          className={`game-panel game-panel--system ${system.boosted ? "game-panel--boosted" : ""}`}
+          style={createPanelStyle(system.accentColor)}
+        >
+          <div className="game-panel__badge">{`[${system.hotkey}] ${formatSystemLabel(system.key)}`}</div>
+          {system.statusText ? (
+            <div className="game-system__status">{system.statusText}</div>
+          ) : null}
+          <div className="game-panel__meters">
+            {system.meters.map((meter, index) => (
+              <div key={`${system.key}-meter-${index}`} className="game-system__meter">
+                <div className="game-system__row">
+                  <span className="game-system__label">
+                    {resolveSystemMeterLabel(system.key, index)}
+                  </span>
+                  <span className="game-system__value">
+                    {`${Math.round(clamp01(meter.value) * 100)}%`}
+                  </span>
+                </div>
+                <Meter meter={meter} />
+              </div>
+            ))}
+          </div>
+        </section>
+      ))}
+      {props.cloak ? (
+        <section
+          className={`game-panel game-panel--system ${props.cloak.active ? "game-panel--boosted" : ""}`}
+          style={createPanelStyle(props.cloak.active ? "#89ffd5" : "#70d8ff")}
+        >
+          <div className="game-panel__badge">{`[${props.cloak.hotkey}] Cloak`}</div>
+          <div className="game-panel__meters">
+            <div className="game-system__meter">
+              <div className="game-system__row">
+                <span className="game-system__label">
+                  {props.cloak.active ? "Active" : "Charge"}
+                </span>
+                <span className="game-system__value">
+                  {`${Math.round(clamp01(resolveCloakFraction(props.cloak)) * 100)}%`}
+                </span>
+              </div>
+              <Meter
+                meter={{
+                  value: resolveCloakFraction(props.cloak),
+                  fillColor: props.cloak.active ? "#89ffd5" : "#70d8ff",
+                  backgroundColor: "#0c1f2f",
+                }}
+              />
+            </div>
+          </div>
+        </section>
+      ) : null}
+    </div>
+  );
+}
+
+function compareSystemsByHotkey(
+  left: OverlaySystemPanelState,
+  right: OverlaySystemPanelState,
+): number {
+  const leftHotkey = Number.parseInt(left.hotkey, 10);
+  const rightHotkey = Number.parseInt(right.hotkey, 10);
+  const leftSort = Number.isFinite(leftHotkey) ? leftHotkey : Number.POSITIVE_INFINITY;
+  const rightSort = Number.isFinite(rightHotkey) ? rightHotkey : Number.POSITIVE_INFINITY;
+  if (leftSort !== rightSort) {
+    return leftSort - rightSort;
+  }
+  return left.key.localeCompare(right.key);
+}
+
+function formatSystemLabel(systemKey: string): string {
+  switch (systemKey) {
+    case "engines":
+      return "Engines";
+    case "scanners":
+      return "Scanners";
+    case "weapons":
+      return "Weapons";
+    case "defenses":
+      return "Defenses";
+    default:
+      return systemKey;
+  }
+}
+
+function resolveSystemMeterLabel(systemKey: string, meterIndex: number): string {
+  if (systemKey === "engines" && meterIndex === 0) {
+    return "Output";
+  }
+  if (systemKey === "engines" && meterIndex === 1) {
+    return "Fuel";
+  }
+  if (systemKey === "defenses") {
+    return "Shield Capacity";
+  }
+  return "Charge";
+}
+
+function resolveCloakFraction(cloak: OverlayCloakState): number {
+  if (cloak.maxCharge <= 0) {
+    return 0;
+  }
+  return clamp01(cloak.charge / cloak.maxCharge);
 }
 
 function formatFocusedSystemLabel(systemKey: string | null): string {
@@ -457,7 +481,7 @@ function formatFocusedSystemLabel(systemKey: string | null): string {
     case "weapons":
       return "Weapons";
     case "defenses":
-      return "Shield";
+      return "Defenses";
     default:
       return "None";
   }

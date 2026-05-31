@@ -2,10 +2,8 @@ import { COMBAT_BALANCE } from "../game/combat/combat-balance";
 import type { MissionRuntimeSnapshot } from "../game/missions/mission-runtime";
 import type { GameWarningState } from "../game/warnings/game-warning-manager";
 import type { ShipSystemsState } from "../game/ships/systems";
-import {
-  getEngineSuperBurnMultiplier,
-} from "../game/ships/systems";
 import type {
+  OverlayCloakState,
   GameOverlayState,
   OverlayMultiplayerEventState,
   OverlayScoreboardState,
@@ -37,6 +35,7 @@ interface BuildPrototypeHudStateOptions {
   warnings: readonly GameWarningState[];
   audioCueIds: readonly string[];
   playerVitals?: OverlayVitalsState | null;
+  cloak?: OverlayCloakState | null;
   multiplayerEvents?: readonly OverlayMultiplayerEventState[];
 }
 
@@ -53,18 +52,12 @@ const SYSTEM_PANEL_CONFIG: readonly {
 ] as const;
 
 const TRAINING_HINT_OBJECTIVE_LIMIT = 4;
+const BOOSTED_SHIELD_CAPACITY_MULTIPLIER = 1.5;
 
 export function buildPrototypeHudState(
   options: BuildPrototypeHudStateOptions,
 ): GameOverlayState {
-  const weaponAccent = getWeaponAccentColor(options.weaponMode);
-  const weaponChargeFraction = options.shipSystems.weapons.maxCharge > 0
-    ? options.shipSystems.weapons.charge / options.shipSystems.weapons.maxCharge
-    : 0;
-  const engineOutputLevel = getEngineOutputLevel(
-    options.shipSystems,
-    options.engineThrottle,
-  );
+  const engineOutputLevel = getEngineOutputLevel(options.engineThrottle);
 
   return {
     hudVisible: options.hudVisible && !options.isCrashed,
@@ -131,6 +124,7 @@ export function buildPrototypeHudState(
       options.trainingMissionEnabled,
     ),
     vitals: options.playerVitals ?? null,
+    cloak: options.cloak ?? null,
     multiplayerEvents: [...(options.multiplayerEvents ?? [])],
   };
 }
@@ -146,16 +140,21 @@ function buildSystemPanels(
     ? SYSTEM_PANEL_CONFIG.filter((panel) => panel.key === "engines")
     : SYSTEM_PANEL_CONFIG;
 
-  return visiblePanels.map((panel) => {
+  const orderedPanels = [...visiblePanels].sort(
+    (left, right) => Number(left.hotkey) - Number(right.hotkey),
+  );
+
+  return orderedPanels.map((panel) => {
     const boosted = shipSystems.boosted === panel.key;
     const systemState = shipSystems[panel.key];
     const accentColor = colorToCssHex(boosted ? panel.accent : 0x557188);
 
     if (panel.key === "engines") {
-      const outputFraction = getEngineOutputLevel(shipSystems, engineThrottle);
+      const outputFraction = getEngineOutputLevel(engineThrottle);
       return {
         key: panel.key,
-        title: `${panel.hotkey} ${panel.label}`,
+        hotkey: panel.hotkey,
+        title: panel.label,
         accentColor,
         boosted,
         meters: [
@@ -175,17 +174,31 @@ function buildSystemPanels(
       };
     }
 
+    if (panel.key === "scanners") {
+      return {
+        key: panel.key,
+        hotkey: panel.hotkey,
+        title: panel.label,
+        accentColor,
+        boosted,
+        statusText: boosted
+          ? "Focused sweep: range and lock amplified"
+          : "Passive sweep array",
+        meters: [],
+      };
+    }
+
     if (panel.key === "weapons") {
       return {
         key: panel.key,
-        title: `${panel.hotkey} ${panel.label}`,
+        hotkey: panel.hotkey,
+        title: panel.label,
         accentColor,
         boosted,
+        statusText: `${weaponArmed ? "ARMED" : "SAFE"} | ${getWeaponModeStatusLabel(weaponMode)} | [G] switch`,
         meters: [
           {
-            value: systemState.maxCharge > 0
-              ? systemState.charge / systemState.maxCharge
-              : 0,
+            value: getWeaponChargeDisplayFraction(systemState),
             fillColor: colorToCssHex(
               weaponArmed ? getWeaponAccentColor(weaponMode) : 0xd46a60,
             ),
@@ -197,9 +210,27 @@ function buildSystemPanels(
       };
     }
 
+    if (panel.key === "defenses") {
+      return {
+        key: panel.key,
+        hotkey: panel.hotkey,
+        title: panel.label,
+        accentColor,
+        boosted,
+        meters: [
+          {
+            value: getShieldCapacityFraction(systemState, boosted),
+            fillColor: colorToCssHex(boosted ? panel.accent : 0x6f8797),
+            backgroundColor: colorToCssHex(0x17202b),
+          },
+        ],
+      };
+    }
+
     return {
       key: panel.key,
-      title: `${panel.hotkey} ${panel.label}`,
+      hotkey: panel.hotkey,
+      title: panel.label,
       accentColor,
       boosted,
       meters: [
@@ -216,13 +247,39 @@ function buildSystemPanels(
 }
 
 function getEngineOutputLevel(
-  shipSystems: ShipSystemsState,
   engineThrottle: number,
 ): number {
-  return Math.min(
-    1,
-    engineThrottle / getEngineSuperBurnMultiplier(shipSystems),
+  return clamp01(engineThrottle);
+}
+
+function getWeaponChargeDisplayFraction(
+  subsystem: ShipSystemsState["weapons"],
+): number {
+  if (subsystem.baseMaxCharge <= 0) {
+    return 0;
+  }
+  return clamp01(subsystem.charge / subsystem.baseMaxCharge);
+}
+
+function getShieldCapacityFraction(
+  subsystem: ShipSystemsState["defenses"],
+  boosted: boolean,
+): number {
+  const shieldFraction = subsystem.maxCharge > 0
+    ? subsystem.charge / subsystem.maxCharge
+    : 0;
+  const activeShieldCapacityMultiplier = boosted ? BOOSTED_SHIELD_CAPACITY_MULTIPLIER : 1;
+  return clamp01(
+    shieldFraction * (activeShieldCapacityMultiplier / BOOSTED_SHIELD_CAPACITY_MULTIPLIER),
   );
+}
+
+function getWeaponModeStatusLabel(mode: PlayerWeaponMode): string {
+  return mode === "disintegrator" ? "Phaser" : "Disruptor";
+}
+
+function clamp01(value: number): number {
+  return Math.max(0, Math.min(1, value));
 }
 
 function buildScoreboardState(

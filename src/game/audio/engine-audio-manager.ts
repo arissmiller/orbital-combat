@@ -8,6 +8,8 @@ interface EngineAudioManagerOptions {
   gainSmoothingSeconds?: number;
   playbackRateSmoothingSeconds?: number;
   minimumActiveOutput?: number;
+  minimumStopOutput?: number;
+  stopHoldSeconds?: number;
 }
 
 export interface EngineAudioState {
@@ -24,9 +26,14 @@ export interface EngineAudioManager {
 export function createEngineAudioManager(
   options: EngineAudioManagerOptions = {},
 ): EngineAudioManager {
-  const gainSmoothingSeconds = options.gainSmoothingSeconds ?? 0;
+  const gainSmoothingSeconds = options.gainSmoothingSeconds ?? 0.05;
   const playbackRateSmoothingSeconds = options.playbackRateSmoothingSeconds ?? 0.08;
-  const minimumActiveOutput = options.minimumActiveOutput ?? 0.008;
+  const minimumActiveOutput = options.minimumActiveOutput ?? 0.014;
+  const minimumStopOutput = Math.min(
+    minimumActiveOutput,
+    options.minimumStopOutput ?? 0.005,
+  );
+  const stopHoldMilliseconds = Math.max(0, (options.stopHoldSeconds ?? 0.12) * 1000);
   const audioSystem = createGameAudioSystem({
     busVolumes: {
       warnings: 0.4,
@@ -49,6 +56,7 @@ export function createEngineAudioManager(
   const modulationPhaseA = Math.random() * Math.PI * 2;
   const modulationPhaseB = Math.random() * Math.PI * 2;
   const modulationStartMilliseconds = performance.now();
+  let belowStopThresholdSinceMilliseconds: number | null = null;
 
   const unlockAudio = () => {
     unlocked = true;
@@ -91,8 +99,26 @@ export function createEngineAudioManager(
   };
 
   function applyState(state: EngineAudioState): void {
-    if (state.outputLevel <= minimumActiveOutput) {
+    const nowMilliseconds = performance.now();
+    if (state.outputLevel <= minimumStopOutput) {
+      if (belowStopThresholdSinceMilliseconds === null) {
+        belowStopThresholdSinceMilliseconds = nowMilliseconds;
+      }
+    } else {
+      belowStopThresholdSinceMilliseconds = null;
+    }
+
+    const heldBelowStopThreshold =
+      belowStopThresholdSinceMilliseconds !== null &&
+      nowMilliseconds - belowStopThresholdSinceMilliseconds >= stopHoldMilliseconds;
+
+    if (primaryLoopPlaying && heldBelowStopThreshold) {
       stopPrimaryLoop();
+      belowStopThresholdSinceMilliseconds = null;
+      return;
+    }
+
+    if (!primaryLoopPlaying && state.outputLevel <= minimumActiveOutput) {
       return;
     }
 
@@ -135,6 +161,7 @@ export function createEngineAudioManager(
 
     audioSystem.samplePlayer.stopSource(ENGINE_LOOP_PRIMARY_SOURCE_ID);
     primaryLoopPlaying = false;
+    belowStopThresholdSinceMilliseconds = null;
   }
 
   function computeEnginePlaybackRate(state: EngineAudioState): number {

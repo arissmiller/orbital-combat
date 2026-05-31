@@ -169,6 +169,7 @@ import {
   focusSubsystem,
   getDefenseEnemyLockMultiplier,
   getDefenseDisintegratorResistanceMultiplier,
+  getEngineCruiseOutputCeiling,
   getEngineFuelFraction,
   getEngineFullBoostMultiplier,
   getEngineLateralThrustScale,
@@ -1932,11 +1933,12 @@ export function mountPrototypeScene(
     const superBurnActive =
       thrustVector?.useFullBoostOutput === true ||
       (boostInput && shipSystems.boosted === "engines");
+    const engineCruiseOutputCeiling = getEngineCruiseOutputCeiling(shipSystems);
     const engineOutputCeiling = thrustVector?.useFullBoostOutput
       ? engineFullBoostMultiplier
       : superBurnActive
         ? engineSuperBurnMultiplier
-        : 1;
+        : engineCruiseOutputCeiling;
     if (interceptorBody.propulsion) {
       interceptorBody.propulsion.maxThrust =
         interceptorBaseMaxThrust *

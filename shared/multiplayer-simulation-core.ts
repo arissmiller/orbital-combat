@@ -82,6 +82,8 @@ const SHIP_SYSTEMS_BALANCE = {
     thrustMultiplier: 2,
     progradeRetrogradeThrustScale: 1,
     lateralThrustScale: 1,
+    cruiseOutputCeilingUnfocused: 1,
+    responseMultiplier: 2,
     superBurnMultiplier: 2.8,
     fuelBurnPerSecond: 0.01,
   },
@@ -325,31 +327,37 @@ export function stepMultiplayerPlayers(
     const superBurnActive =
       thrustVector?.useFullBoostOutput === true
       || (flightInput.boostInput && player.systems.boosted === "engines");
+    const engineCruiseOutputCeiling = getEngineCruiseOutputCeiling(player.systems);
     const engineOutputCeiling = thrustVector?.useFullBoostOutput
       ? getEngineFullBoostMultiplier()
       : superBurnActive
         ? getEngineSuperBurnMultiplier(player.systems)
-        : 1;
+        : engineCruiseOutputCeiling;
     const engineFuelFraction = getEngineFuelFraction(player.systems);
     const requestedThrottle =
       !thrustVector || engineFuelFraction <= 0
         ? 0
         : thrustVector.throttle * engineOutputCeiling;
+    const throttle = approachValue(
+      clamp(player.throttle ?? 0, 0, Math.max(engineOutputCeiling, 0)),
+      requestedThrottle,
+      getEngineResponseMultiplier(player.systems) * stepSeconds,
+    );
 
-    if (thrustVector && requestedThrottle > 0) {
+    if (thrustVector && throttle > 0) {
       const maxThrust =
         tuning.playerBaseMaxThrust *
         getEngineThrustMultiplier(player.systems) *
         engineOutputCeiling;
-      const thrustAcceleration = (maxThrust * requestedThrottle) / tuning.playerMass;
+      const thrustAcceleration = (maxThrust * throttle) / tuning.playerMass;
       player.vx += Math.cos(thrustVector.heading) * thrustAcceleration * stepSeconds;
       player.vy += Math.sin(thrustVector.heading) * thrustAcceleration * stepSeconds;
-      consumeEngineFuel(player.systems, requestedThrottle, stepSeconds);
+      consumeEngineFuel(player.systems, throttle, stepSeconds);
     }
 
     player.vx += netGravityAcceleration.x * stepSeconds;
     player.vy += netGravityAcceleration.y * stepSeconds;
-    player.throttle = requestedThrottle;
+    player.throttle = throttle;
     player.thrustHeading = thrustVector?.heading ?? null;
     player.superBurnActive = superBurnActive;
 
@@ -558,8 +566,20 @@ function getEngineSuperBurnMultiplier(state: ShipSystemsState): number {
     : 1;
 }
 
+function getEngineResponseMultiplier(state: ShipSystemsState): number {
+  return state.boosted === "engines"
+    ? SHIP_SYSTEMS_BALANCE.engines.responseMultiplier
+    : 1;
+}
+
 function getEngineFullBoostMultiplier(): number {
   return SHIP_SYSTEMS_BALANCE.engines.superBurnMultiplier;
+}
+
+function getEngineCruiseOutputCeiling(state: ShipSystemsState): number {
+  return state.boosted === "engines"
+    ? 1
+    : SHIP_SYSTEMS_BALANCE.engines.cruiseOutputCeilingUnfocused;
 }
 
 function getEngineFuelFraction(state: ShipSystemsState): number {
@@ -747,6 +767,13 @@ function createGravityAlignedBoostThrustVector(
     label,
     useFullBoostOutput: true,
   };
+}
+
+function approachValue(current: number, target: number, maxDelta: number): number {
+  if (current < target) {
+    return Math.min(current + maxDelta, target);
+  }
+  return Math.max(current - maxDelta, target);
 }
 
 function toFlightInputState(input: PlayerInputCommand | null): FlightInputState {

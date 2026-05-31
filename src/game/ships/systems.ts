@@ -92,6 +92,12 @@ export function getEngineFullBoostMultiplier(): number {
   return SHIP_SYSTEMS_BALANCE.engines.superBurnMultiplier;
 }
 
+export function getEngineCruiseOutputCeiling(state: ShipSystemsState): number {
+  return state.boosted === "engines"
+    ? 1
+    : SHIP_SYSTEMS_BALANCE.engines.cruiseOutputCeilingUnfocused;
+}
+
 export function getEngineFuelFraction(state: ShipSystemsState): number {
   return state.engines.maxCharge > 0
     ? state.engines.charge / state.engines.maxCharge

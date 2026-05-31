@@ -45,10 +45,19 @@ interface CameraState {
   initialized: boolean;
 }
 
+interface CameraThreatHoldState {
+  holdUntilSeconds: number;
+  lastKnownX: number;
+  lastKnownY: number;
+  lastKnownVx: number;
+  lastKnownVy: number;
+}
+
 export interface MultiplayerWorldPresenterRenderOptions {
   frame: ResolvedSimulationFrame;
   rosterNamesByPlayerId: ReadonlyMap<string, string>;
   selfPlayerId: string | null;
+  selectedTargetPlayerId?: string | null;
   tickerDeltaTime: number;
   viewportWidth: number;
   viewportHeight: number;
@@ -85,6 +94,19 @@ const DEFAULT_CAMERA_MAX_SCALE = 0.46;
 const DEFAULT_CAMERA_PADDING = 260;
 const DEFAULT_PLAYER_RENDER_SMOOTHING = 0.3;
 const PLAYER_RENDER_TELEPORT_SNAP_DISTANCE = 520;
+const CAMERA_LOOK_AHEAD_SECONDS = 0.32;
+const CAMERA_LOOK_AHEAD_MAX_DISTANCE = 420;
+const CAMERA_TARGET_LEAD_SECONDS = 0.22;
+const CAMERA_MAX_NEARBY_PLAYERS = 3;
+const CAMERA_MIN_CONTEXT_RADIUS = 420;
+const CAMERA_MAX_CONTEXT_RADIUS = 860;
+const CAMERA_BODY_CONTEXT_MARGIN = 260;
+const CAMERA_MAX_CONTEXT_BODIES = 3;
+const CAMERA_ZOOM_OUT_MULTIPLIER = 1.8;
+const CAMERA_ZOOM_IN_MULTIPLIER = 0.72;
+const CAMERA_THREAT_HOLD_SECONDS = 0.42;
+const CAMERA_HELD_THREAT_DISTANCE_FACTOR = 2.25;
+const CAMERA_MAX_HELD_THREATS = 4;
 
 export function createMultiplayerWorldPresenter(
   options: MultiplayerWorldPresenterOptions,
@@ -99,6 +121,8 @@ export function createMultiplayerWorldPresenter(
     scale: 1,
     initialized: false,
   };
+  const cameraThreatHoldByPlayerId = new Map<string, CameraThreatHoldState>();
+  let cameraElapsedSeconds = 0;
 
   const cameraSmoothing = options.cameraSmoothing ?? DEFAULT_CAMERA_SMOOTHING;
   const cameraMinScale = options.cameraMinScale ?? DEFAULT_CAMERA_MIN_SCALE;
@@ -112,6 +136,7 @@ export function createMultiplayerWorldPresenter(
 
     activeMapDefinition = mapDefinition;
     activeMapBodiesById = buildMultiplayerMapBodiesById(activeMapDefinition);
+    cameraThreatHoldByPlayerId.clear();
     for (const visual of bodyVisuals.values()) {
       visual.sprite.destroy();
     }
@@ -269,22 +294,16 @@ export function createMultiplayerWorldPresenter(
   const updateCamera = (
     renderOptions: MultiplayerWorldPresenterRenderOptions,
   ): void => {
-    const alivePlayers = renderOptions.frame.players.filter(
-      (player) => player.life?.alive !== false,
+    cameraElapsedSeconds += Math.max(0, renderOptions.tickerDeltaTime / 60);
+    const focusPoints = buildCameraFocusPoints(
+      renderOptions.frame,
+      renderOptions.selfPlayerId,
+      renderOptions.selectedTargetPlayerId ?? null,
+      {
+        nowSeconds: cameraElapsedSeconds,
+        threatHoldByPlayerId: cameraThreatHoldByPlayerId,
+      },
     );
-    const playersForCamera = alivePlayers.length > 0
-      ? alivePlayers
-      : renderOptions.frame.players;
-    const focusPoints = [
-      ...renderOptions.frame.celestialBodies.map((body) => ({
-        x: body.renderX,
-        y: body.renderY,
-      })),
-      ...playersForCamera.map((player) => ({
-        x: player.renderX,
-        y: player.renderY,
-      })),
-    ];
     const cameraFrame = computeCameraFrame({
       screenWidth: renderOptions.viewportWidth,
       screenHeight: renderOptions.viewportHeight,
@@ -303,10 +322,16 @@ export function createMultiplayerWorldPresenter(
       camera.scale = targetScale;
       camera.initialized = true;
     } else {
-      const blend = Math.min(1, cameraSmoothing * renderOptions.tickerDeltaTime);
-      camera.x = lerp(camera.x, targetX, blend);
-      camera.y = lerp(camera.y, targetY, blend);
-      camera.scale = lerp(camera.scale, targetScale, blend);
+      const positionBlend = Math.min(1, cameraSmoothing * renderOptions.tickerDeltaTime);
+      const zoomBlend = Math.min(
+        1,
+        cameraSmoothing
+          * renderOptions.tickerDeltaTime
+          * (targetScale < camera.scale ? CAMERA_ZOOM_OUT_MULTIPLIER : CAMERA_ZOOM_IN_MULTIPLIER),
+      );
+      camera.x = lerp(camera.x, targetX, positionBlend);
+      camera.y = lerp(camera.y, targetY, positionBlend);
+      camera.scale = lerp(camera.scale, targetScale, zoomBlend);
     }
 
     options.world.scale.set(camera.scale);
@@ -327,6 +352,7 @@ export function createMultiplayerWorldPresenter(
     }
     bodyVisuals.clear();
     playerVisuals.clear();
+    cameraThreatHoldByPlayerId.clear();
     options.orbitLayer.clear();
   };
 
@@ -358,6 +384,215 @@ function createBodyVisual(
     buildMultiplayerCelestialConfig(body, mapBodyConfig),
   );
   return { sprite };
+}
+
+function buildCameraFocusPoints(
+  frame: ResolvedSimulationFrame,
+  selfPlayerId: string | null,
+  selectedTargetPlayerId: string | null,
+  options: {
+    nowSeconds: number;
+    threatHoldByPlayerId: Map<string, CameraThreatHoldState>;
+  },
+): Array<{ x: number; y: number }> {
+  const alivePlayers = frame.players.filter((player) => player.life?.alive !== false);
+  const fallbackPlayers = alivePlayers.length > 0 ? alivePlayers : frame.players;
+  const playersById = new Map(frame.players.map((player) => [player.playerId, player] as const));
+
+  for (const [playerId, holdState] of options.threatHoldByPlayerId) {
+    if (holdState.holdUntilSeconds < options.nowSeconds) {
+      options.threatHoldByPlayerId.delete(playerId);
+      continue;
+    }
+    const player = playersById.get(playerId);
+    if (!player || player.life?.alive === false) {
+      continue;
+    }
+    holdState.lastKnownX = player.renderX;
+    holdState.lastKnownY = player.renderY;
+    holdState.lastKnownVx = player.vx;
+    holdState.lastKnownVy = player.vy;
+  }
+
+  const selfPlayer = selfPlayerId
+    ? frame.players.find((player) => player.playerId === selfPlayerId) ?? null
+    : null;
+  if (!selfPlayer) {
+    options.threatHoldByPlayerId.clear();
+    return fallbackPlayers.map((player) => ({ x: player.renderX, y: player.renderY }));
+  }
+
+  const focusPoints: Array<{ x: number; y: number }> = [{ x: selfPlayer.renderX, y: selfPlayer.renderY }];
+  const scannerRange = selfPlayer.scanner?.range ?? 1320;
+  const contextRadius = clamp(scannerRange * 0.58, CAMERA_MIN_CONTEXT_RADIUS, CAMERA_MAX_CONTEXT_RADIUS);
+
+  // Keep a stable local envelope around self so camera framing stays combat-centric.
+  focusPoints.push(
+    { x: selfPlayer.renderX + contextRadius, y: selfPlayer.renderY },
+    { x: selfPlayer.renderX - contextRadius, y: selfPlayer.renderY },
+    { x: selfPlayer.renderX, y: selfPlayer.renderY + contextRadius },
+    { x: selfPlayer.renderX, y: selfPlayer.renderY - contextRadius },
+  );
+
+  const selfSpeed = Math.hypot(selfPlayer.vx, selfPlayer.vy);
+  const lookAheadDistance = clamp(selfSpeed * CAMERA_LOOK_AHEAD_SECONDS, 0, CAMERA_LOOK_AHEAD_MAX_DISTANCE);
+  if (lookAheadDistance > 1) {
+    focusPoints.push({
+      x: selfPlayer.renderX + (selfPlayer.vx / selfSpeed) * lookAheadDistance,
+      y: selfPlayer.renderY + (selfPlayer.vy / selfSpeed) * lookAheadDistance,
+    });
+  }
+
+  const opponents = frame.players.filter((player) =>
+    player.playerId !== selfPlayer.playerId && player.life?.alive !== false
+  );
+  const opponentsSortedByDistance = opponents
+    .map((player) => ({
+      player,
+      distanceSquared:
+        (player.renderX - selfPlayer.renderX) * (player.renderX - selfPlayer.renderX)
+        + (player.renderY - selfPlayer.renderY) * (player.renderY - selfPlayer.renderY),
+    }))
+    .sort((left, right) => left.distanceSquared - right.distanceSquared);
+
+  const upsertThreatHold = (playerId: string | null | undefined): void => {
+    if (!playerId || playerId === selfPlayer.playerId) {
+      return;
+    }
+    const existing = options.threatHoldByPlayerId.get(playerId);
+    const player = playersById.get(playerId);
+    if (!player && !existing) {
+      return;
+    }
+    options.threatHoldByPlayerId.set(playerId, {
+      holdUntilSeconds: options.nowSeconds + CAMERA_THREAT_HOLD_SECONDS,
+      lastKnownX: player?.renderX ?? existing?.lastKnownX ?? selfPlayer.renderX,
+      lastKnownY: player?.renderY ?? existing?.lastKnownY ?? selfPlayer.renderY,
+      lastKnownVx: player?.vx ?? existing?.lastKnownVx ?? 0,
+      lastKnownVy: player?.vy ?? existing?.lastKnownVy ?? 0,
+    });
+  };
+
+  upsertThreatHold(selectedTargetPlayerId);
+  const engagedOpponentIds = new Set<string>();
+  for (const event of frame.combatEvents) {
+    if (event.attackerPlayerId === selfPlayer.playerId) {
+      engagedOpponentIds.add(event.targetPlayerId);
+      upsertThreatHold(event.targetPlayerId);
+    }
+    if (event.targetPlayerId === selfPlayer.playerId && event.attackerPlayerId) {
+      engagedOpponentIds.add(event.attackerPlayerId);
+      upsertThreatHold(event.attackerPlayerId);
+    }
+  }
+
+  const maxHeldThreatDistance =
+    contextRadius * CAMERA_HELD_THREAT_DISTANCE_FACTOR;
+  const maxHeldThreatDistanceSquared = maxHeldThreatDistance * maxHeldThreatDistance;
+  const heldOpponentIds = [...options.threatHoldByPlayerId.entries()]
+    .map(([playerId, holdState]) => {
+      const player = playersById.get(playerId);
+      const x = player?.renderX ?? holdState.lastKnownX;
+      const y = player?.renderY ?? holdState.lastKnownY;
+      const dx = x - selfPlayer.renderX;
+      const dy = y - selfPlayer.renderY;
+      return {
+        playerId,
+        holdUntilSeconds: holdState.holdUntilSeconds,
+        distanceSquared: dx * dx + dy * dy,
+      };
+    })
+    .filter((entry) => entry.distanceSquared <= maxHeldThreatDistanceSquared)
+    .sort(
+      (left, right) =>
+        right.holdUntilSeconds - left.holdUntilSeconds
+        || left.distanceSquared - right.distanceSquared,
+    )
+    .slice(0, CAMERA_MAX_HELD_THREATS)
+    .map((entry) => entry.playerId);
+
+  const prioritizedOpponentIds: string[] = [];
+  if (selectedTargetPlayerId) {
+    prioritizedOpponentIds.push(selectedTargetPlayerId);
+  }
+  for (const playerId of engagedOpponentIds) {
+    prioritizedOpponentIds.push(playerId);
+  }
+  for (const playerId of heldOpponentIds) {
+    prioritizedOpponentIds.push(playerId);
+  }
+
+  const addedOpponentIds = new Set<string>();
+  const addOpponentFocus = (playerId: string): void => {
+    if (addedOpponentIds.has(playerId)) {
+      return;
+    }
+    const heldState = options.threatHoldByPlayerId.get(playerId);
+    const player = playersById.get(playerId);
+    if (player?.playerId === selfPlayer.playerId || player?.life?.alive === false) {
+      return;
+    }
+    if (!player && !heldState) {
+      return;
+    }
+    const sourceX = player?.renderX ?? heldState?.lastKnownX ?? selfPlayer.renderX;
+    const sourceY = player?.renderY ?? heldState?.lastKnownY ?? selfPlayer.renderY;
+    const sourceVx = player?.vx ?? heldState?.lastKnownVx ?? 0;
+    const sourceVy = player?.vy ?? heldState?.lastKnownVy ?? 0;
+    addedOpponentIds.add(playerId);
+    focusPoints.push(
+      { x: sourceX, y: sourceY },
+      {
+        x: sourceX + sourceVx * CAMERA_TARGET_LEAD_SECONDS,
+        y: sourceY + sourceVy * CAMERA_TARGET_LEAD_SECONDS,
+      },
+    );
+  };
+
+  for (const playerId of prioritizedOpponentIds) {
+    if (addedOpponentIds.size >= CAMERA_MAX_NEARBY_PLAYERS) {
+      break;
+    }
+    addOpponentFocus(playerId);
+  }
+
+  const nearbyPlayerRadiusSquared = Math.max(contextRadius * 1.35, 640);
+  const nearbyPlayerRadiusSquaredValue = nearbyPlayerRadiusSquared * nearbyPlayerRadiusSquared;
+  for (const entry of opponentsSortedByDistance) {
+    if (addedOpponentIds.size >= CAMERA_MAX_NEARBY_PLAYERS) {
+      break;
+    }
+    if (entry.distanceSquared > nearbyPlayerRadiusSquaredValue) {
+      break;
+    }
+    addOpponentFocus(entry.player.playerId);
+  }
+
+  const occludingBodyIds = new Set(
+    selfPlayer.scanner?.contacts
+      .map((contact) => contact.occludedByCelestialId)
+      .filter((bodyId): bodyId is string => typeof bodyId === "string" && bodyId.length > 0) ?? [],
+  );
+
+  const nearbyBodies = frame.celestialBodies
+    .map((body) => {
+      const distanceToSelf = Math.hypot(body.renderX - selfPlayer.renderX, body.renderY - selfPlayer.renderY);
+      const inclusionDistance = contextRadius + body.radius + CAMERA_BODY_CONTEXT_MARGIN;
+      return {
+        body,
+        distanceToSelf,
+        include: occludingBodyIds.has(body.id) || distanceToSelf <= inclusionDistance,
+      };
+    })
+    .filter((entry) => entry.include)
+    .sort((left, right) => left.distanceToSelf - right.distanceToSelf)
+    .slice(0, CAMERA_MAX_CONTEXT_BODIES);
+
+  for (const entry of nearbyBodies) {
+    focusPoints.push({ x: entry.body.renderX, y: entry.body.renderY });
+  }
+
+  return focusPoints;
 }
 
 function createPlayerVisual(isSelf: boolean): PlayerVisual {

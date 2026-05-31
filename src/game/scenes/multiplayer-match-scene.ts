@@ -38,6 +38,7 @@ import { createMultiplayerWorldPresenter } from "../rendering/multiplayer-world-
 import { KeyTracker } from "../input/key-tracker";
 import { createSceneInputState, readSceneInputActions } from "../input/scene-input";
 import {
+  resolveTravelRelativeThrustVector,
   readFlightInput,
   type FlightInputState,
 } from "../flight/controls";
@@ -46,6 +47,13 @@ import type { Vector2Like } from "../physics/vector2";
 import {
   createShipSystemsState,
   focusSubsystem,
+  getEngineCruiseOutputCeiling,
+  getEngineFuelFraction,
+  getEngineFullBoostMultiplier,
+  getEngineLateralThrustScale,
+  getEngineProgradeRetrogradeThrustScale,
+  getEngineSuperBurnMultiplier,
+  getEngineThrustMultiplier,
   getWeaponRangeMultiplier,
   type ShipSystemsState,
 } from "../ships/systems";
@@ -152,6 +160,12 @@ interface CombatBeamFxState {
   weaponMode: PlayerWeaponMode;
   intensity: number;
   ttlSeconds: number;
+}
+
+interface LocalEngineTelemetry {
+  throttle: number;
+  thrustHeading: number | null;
+  superBurnActive: boolean;
 }
 
 const EMPTY_MULTIPLAYER_MISSION_SNAPSHOT: MissionRuntimeSnapshot = {
@@ -263,6 +277,7 @@ export function mountMultiplayerMatchScene(context: SceneContext): SceneHandle {
   let localShieldRenderTargetFraction = 0;
   let localShieldRenderFlash = 0;
   let localShieldRenderInitialized = false;
+  let localSuperBurnActive = false;
   let smoothedThrustHeading: number | null = null;
   let smoothedThrottle = 0;
   let overlayElapsedSeconds = 0;
@@ -718,7 +733,7 @@ export function mountMultiplayerMatchScene(context: SceneContext): SceneHandle {
     fpsSmoothed = fpsSmoothed * 0.9 + (1000 / Math.max(1, ticker.deltaMS)) * 0.1;
     overlayElapsedSeconds += deltaSeconds;
     if (frame) {
-      applyAuthoritativeHudTelemetry(frame);
+      applyAuthoritativeHudTelemetry(frame, flightInput);
     }
     stepShieldRenderState(deltaSeconds);
     updateOverlay(frame, nowMs, overlayElapsedSeconds);
@@ -741,6 +756,7 @@ export function mountMultiplayerMatchScene(context: SceneContext): SceneHandle {
       frame: renderFrame,
       rosterNamesByPlayerId,
       selfPlayerId,
+      selectedTargetPlayerId,
       tickerDeltaTime: ticker.deltaTime,
       viewportWidth: context.app.renderer.width,
       viewportHeight: context.app.renderer.height,
@@ -803,6 +819,7 @@ export function mountMultiplayerMatchScene(context: SceneContext): SceneHandle {
 
   const applyAuthoritativeHudTelemetry = (
     frame: ResolvedSimulationFrame,
+    input: FlightInputState,
   ): void => {
     const selfPlayer =
       selfPlayerId
@@ -828,6 +845,7 @@ export function mountMultiplayerMatchScene(context: SceneContext): SceneHandle {
       localShieldRenderTargetFraction = 0;
       localShieldRenderFlash = 0;
       localShieldRenderInitialized = false;
+      localSuperBurnActive = false;
       selectedTargetPlayerId = null;
       localWeaponEngagementStates.clear();
       return;
@@ -905,10 +923,25 @@ export function mountMultiplayerMatchScene(context: SceneContext): SceneHandle {
       pushMultiplayerEvent("Cloak depleted.", "system");
     }
     localWeaponFiring = localPlayerAlive ? (authoritativeSelfPlayer.weaponFiring ?? false) : false;
-    localEngineThrottle = localPlayerAlive ? (selfPlayer.throttle ?? 0) : 0;
+    if (selfPlayer.systems) {
+      syncHudShipSystems(localShipSystems, selfPlayer.systems);
+    }
+    const localEngineTelemetry = resolveLocalEngineTelemetry({
+      frame,
+      selfPlayer,
+      input,
+      shipSystems: localShipSystems,
+      cloaked: localCloakActive,
+    });
+    localEngineThrottle = localPlayerAlive
+      ? clamp(selfPlayer.throttle ?? localEngineTelemetry.throttle, 0, Number.POSITIVE_INFINITY)
+      : 0;
     localThrustHeadingRadians = localPlayerAlive
-      ? (selfPlayer.thrustHeading ?? null)
+      ? localEngineTelemetry.thrustHeading
       : null;
+    localSuperBurnActive = localPlayerAlive
+      ? localEngineTelemetry.superBurnActive
+      : false;
     if (!localPlayerAlive) {
       localWeaponArmed = authoritativeWeaponArmed;
       localWeaponMode = authoritativeWeaponMode;
@@ -923,10 +956,10 @@ export function mountMultiplayerMatchScene(context: SceneContext): SceneHandle {
       localShieldRenderTargetFraction = 0;
       localShieldRenderFlash = 0;
       localShieldRenderInitialized = false;
+      localSuperBurnActive = false;
     }
 
     if (selfPlayer.systems) {
-      syncHudShipSystems(localShipSystems, selfPlayer.systems);
       const nextShieldRenderTargetFraction = getShieldCapacityFraction(selfPlayer.systems);
       if (!localShieldRenderInitialized) {
         localShieldRenderFraction = nextShieldRenderTargetFraction;
@@ -1509,7 +1542,7 @@ export function mountMultiplayerMatchScene(context: SceneContext): SceneHandle {
       clearNavigationHud();
       return;
     }
-    const cloaked = isPlayerCloaked(selfPlayer);
+    const cloaked = localCloakActive;
     const previewInput = cloaked ? COAST_ONLY_FLIGHT_INPUT : input;
 
     // Derive velocity heading from the sprite's already-smoothed rotation.
@@ -1517,8 +1550,8 @@ export function mountMultiplayerMatchScene(context: SceneContext): SceneHandle {
     const velocityHeading = spriteInfo.rotation - Math.PI / 2;
 
     const blend = Math.min(1, HEADING_DISPLAY_SMOOTHING * tickerDeltaTime);
-    smoothedThrottle = lerp(smoothedThrottle, selfPlayer.throttle ?? 0, blend);
-    const rawThrustHeading = selfPlayer.thrustHeading ?? null;
+    smoothedThrottle = lerp(smoothedThrottle, localEngineThrottle, blend);
+    const rawThrustHeading = localThrustHeadingRadians;
     if (rawThrustHeading !== null) {
       smoothedThrustHeading = smoothedThrustHeading === null
         ? rawThrustHeading
@@ -1615,7 +1648,7 @@ export function mountMultiplayerMatchScene(context: SceneContext): SceneHandle {
         WORLD_OVERLAY_STYLES.engineCompass.scaleMin,
         WORLD_OVERLAY_STYLES.engineCompass.scaleMax,
       ),
-      boosted: selfPlayer.superBurnActive ?? false,
+      boosted: localSuperBurnActive,
       cloaked,
       cloakChargeFraction: localCloakMaxCharge > 0
         ? localCloakCharge / localCloakMaxCharge
@@ -1754,6 +1787,14 @@ export function mountMultiplayerMatchScene(context: SceneContext): SceneHandle {
               shieldMaxCharge: localShipSystems.defenses.maxCharge,
             }
           : null,
+        cloak: selfPlayerId
+          ? {
+              active: localCloakActive,
+              charge: localCloakCharge,
+              maxCharge: localCloakMaxCharge,
+              hotkey: "R",
+            }
+          : null,
       }),
     );
   };
@@ -1817,7 +1858,9 @@ function syncHudSubsystem(
   source: SimPlayerSystemsSnapshot["engines"],
 ): void {
   const maxCharge = Math.max(0, source.maxCharge);
-  target.baseMaxCharge = maxCharge;
+  if (target.baseMaxCharge <= 0) {
+    target.baseMaxCharge = maxCharge;
+  }
   target.maxCharge = maxCharge;
   target.charge = clamp(source.charge, 0, maxCharge);
 }
@@ -1835,6 +1878,90 @@ function getShieldCapacityFraction(
     0,
     1,
   );
+}
+
+function resolveLocalEngineTelemetry(options: {
+  frame: ResolvedSimulationFrame;
+  selfPlayer: ResolvedSimPlayerState;
+  input: FlightInputState;
+  shipSystems: ShipSystemsState;
+  cloaked: boolean;
+}): LocalEngineTelemetry {
+  if (options.selfPlayer.life?.alive === false || options.cloaked) {
+    return {
+      throttle: 0,
+      thrustHeading: null,
+      superBurnActive: false,
+    };
+  }
+
+  const gravityAcceleration = computeNetGravityAcceleration(
+    {
+      x: options.selfPlayer.renderX,
+      y: options.selfPlayer.renderY,
+    },
+    options.frame.celestialBodies,
+  );
+  const gravityMagnitude = Math.hypot(gravityAcceleration.x, gravityAcceleration.y);
+  let thrustHeading: number | null = null;
+  let thrustThrottle = 0;
+  let useFullBoostOutput = false;
+
+  if (options.input.eBrakeInput && gravityMagnitude > FORECAST_GRAVITY_EPSILON) {
+    thrustHeading = Math.atan2(-gravityAcceleration.y, -gravityAcceleration.x);
+    thrustThrottle = 1;
+    useFullBoostOutput = true;
+  } else if (options.input.gravityDiveInput && gravityMagnitude > FORECAST_GRAVITY_EPSILON) {
+    thrustHeading = Math.atan2(gravityAcceleration.y, gravityAcceleration.x);
+    thrustThrottle = 1;
+    useFullBoostOutput = true;
+  } else {
+    const speed = Math.hypot(options.selfPlayer.vx, options.selfPlayer.vy);
+    const travelHeading = speed > FORECAST_GRAVITY_EPSILON
+      ? Math.atan2(options.selfPlayer.vy, options.selfPlayer.vx)
+      : options.selfPlayer.heading;
+    const directionalThrust = resolveTravelRelativeThrustVector({
+      input: options.input,
+      progradeHeading: travelHeading,
+      lateralHeading: travelHeading,
+      progradeRetrogradeIntensity:
+        getEngineThrustMultiplier(options.shipSystems) *
+        getEngineProgradeRetrogradeThrustScale(),
+      lateralIntensity:
+        getEngineThrustMultiplier(options.shipSystems) *
+        getEngineLateralThrustScale(),
+    });
+    if (directionalThrust) {
+      thrustHeading = directionalThrust.heading;
+      thrustThrottle = directionalThrust.throttle;
+    }
+  }
+
+  const superBurnActive =
+    (thrustHeading !== null && useFullBoostOutput) ||
+    (thrustHeading !== null &&
+      options.input.boostInput &&
+      options.shipSystems.boosted === "engines");
+  const engineCruiseOutputCeiling = getEngineCruiseOutputCeiling(options.shipSystems);
+  const engineOutputCeiling = useFullBoostOutput
+    ? getEngineFullBoostMultiplier()
+    : superBurnActive
+      ? getEngineSuperBurnMultiplier(options.shipSystems)
+      : engineCruiseOutputCeiling;
+  const engineFuelFraction = getEngineFuelFraction(options.shipSystems);
+  if (thrustHeading === null || engineFuelFraction <= 0) {
+    return {
+      throttle: 0,
+      thrustHeading: null,
+      superBurnActive: false,
+    };
+  }
+
+  return {
+    throttle: thrustThrottle * engineOutputCeiling,
+    thrustHeading,
+    superBurnActive,
+  };
 }
 
 
