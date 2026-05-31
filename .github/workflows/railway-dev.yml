@@ -108,21 +108,39 @@ jobs:
         run: |
           set -euo pipefail
 
-          status_output="$(railway service status --service "$RAILWAY_SERVICE" --environment "$RAILWAY_ENVIRONMENT" --project "$RAILWAY_PROJECT_ID")"
-          echo "$status_output"
-
-          deployment_id="$(echo "$status_output" | awk '/Deployment:/ {print $2}')"
-          if [ -z "$deployment_id" ]; then
-            echo "Could not determine deployment ID from Railway service status output."
+          service_url="$(railway domain --service "$RAILWAY_SERVICE" --environment "$RAILWAY_ENVIRONMENT" --project "$RAILWAY_PROJECT_ID" | tr -d '\r' | tail -n 1 | xargs)"
+          if [ -z "$service_url" ]; then
+            echo "Could not determine Railway service domain."
             exit 1
           fi
 
-          echo "Checking startup logs for deployment $deployment_id"
-          logs_output="$(railway logs --service "$RAILWAY_SERVICE" --environment "$RAILWAY_ENVIRONMENT" --project "$RAILWAY_PROJECT_ID" --deployment "$deployment_id" --lines 160 || true)"
-          echo "$logs_output"
+          case "$service_url" in
+            http://*|https://*) health_url="${service_url%/}/healthz" ;;
+            *) health_url="https://${service_url%/}/healthz" ;;
+          esac
 
-          if ! echo "$logs_output" | grep -q "\\[server\\] websocket path /ws"; then
-            echo "Expected multiplayer server startup log was not found."
-            echo "This usually means the target service is not running the Node server start command."
-            exit 1
-          fi
+          echo "Checking health at $health_url"
+
+          max_attempts=10
+          retry_delay=10
+          attempt=1
+
+          while [ "$attempt" -le "$max_attempts" ]; do
+            response="$(curl --silent --show-error --location --max-time 10 "$health_url" || true)"
+            echo "$response"
+
+            if echo "$response" | jq -e '.ok == true' >/dev/null 2>&1; then
+              echo "Health check passed."
+              exit 0
+            fi
+
+            if [ "$attempt" -lt "$max_attempts" ]; then
+              echo "Service not healthy yet (attempt ${attempt}/${max_attempts}). Retrying in ${retry_delay}s..."
+              sleep "$retry_delay"
+            fi
+
+            attempt=$((attempt + 1))
+          done
+
+          echo "Service did not become healthy at $health_url after ${max_attempts} attempts."
+          exit 1
