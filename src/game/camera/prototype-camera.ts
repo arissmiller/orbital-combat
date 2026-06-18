@@ -1,6 +1,8 @@
 import type { Vector2Like } from "../physics/vector2";
 import type { SceneCameraOverride } from "../scenes/scene-camera";
 
+const FLIGHT_CAMERA_SHIP_BIAS = 0.58;
+
 export interface CameraFrame {
   center: Vector2Like;
   zoom: number;
@@ -68,7 +70,6 @@ export function updatePrototypeCamera(options: {
   missionVisible: boolean;
   hudVisible: boolean;
   isCrashed: boolean;
-  scannerRange: number;
   sceneCameraOverride: SceneCameraOverride | null;
 }): CameraFrame {
   const activeSceneCameraOverride =
@@ -80,10 +81,12 @@ export function updatePrototypeCamera(options: {
       : {
           x:
             options.cameraFrame.center.x +
-            (options.shipPosition.x - options.cameraFrame.center.x) * 0.82,
+            (options.shipPosition.x - options.cameraFrame.center.x)
+              * FLIGHT_CAMERA_SHIP_BIAS,
           y:
             options.cameraFrame.center.y +
-            (options.shipPosition.y - options.cameraFrame.center.y) * 0.82,
+            (options.shipPosition.y - options.cameraFrame.center.y)
+              * FLIGHT_CAMERA_SHIP_BIAS,
         };
   const cameraTargetZoom = activeSceneCameraOverride
     ? activeSceneCameraOverride.zoom
@@ -116,21 +119,6 @@ export function updatePrototypeCamera(options: {
       tacticalViewActive: options.tacticalViewActive,
       missionVisible: options.missionVisible,
       hudVisible: options.hudVisible,
-    });
-  }
-
-  if (
-    !options.tacticalViewActive &&
-    !options.isCrashed &&
-    !activeSceneCameraOverride
-  ) {
-    nextZoom = constrainZoomToScannerRange({
-      cameraCenter: nextCenter,
-      cameraZoom: nextZoom,
-      shipPosition: options.shipPosition,
-      scannerRange: options.scannerRange,
-      screenWidth: options.screenWidth,
-      screenHeight: options.screenHeight,
     });
   }
 
@@ -211,42 +199,6 @@ function getCameraSafeBox(options: {
     minY: clamp(minY, 48, options.screenHeight - 160),
     maxY: clamp(maxY, 160, options.screenHeight - 48),
   };
-}
-
-function constrainZoomToScannerRange(options: {
-  cameraCenter: Vector2Like;
-  cameraZoom: number;
-  shipPosition: Vector2Like;
-  scannerRange: number;
-  screenWidth: number;
-  screenHeight: number;
-}): number {
-  if (options.scannerRange <= 0) {
-    return options.cameraZoom;
-  }
-
-  const edgePadding = 24;
-  const screenCenter = {
-    x: options.screenWidth * 0.5,
-    y: options.screenHeight * 0.5,
-  };
-  const shipScreenX =
-    screenCenter.x +
-    (options.shipPosition.x - options.cameraCenter.x) * options.cameraZoom;
-  const shipScreenY =
-    screenCenter.y +
-    (options.shipPosition.y - options.cameraCenter.y) * options.cameraZoom;
-  const marginLeft = shipScreenX - edgePadding;
-  const marginRight = options.screenWidth - edgePadding - shipScreenX;
-  const marginTop = shipScreenY - edgePadding;
-  const marginBottom = options.screenHeight - edgePadding - shipScreenY;
-  const limitingMargin = Math.max(
-    24,
-    Math.min(marginLeft, marginRight, marginTop, marginBottom),
-  );
-  const maxAllowedZoom = (limitingMargin * 0.98) / options.scannerRange;
-
-  return Math.min(options.cameraZoom, maxAllowedZoom);
 }
 
 function clamp(value: number, min: number, max: number): number {
