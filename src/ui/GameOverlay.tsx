@@ -67,16 +67,6 @@ export function GameOverlay(): ReactElement | null {
             <MultiplayerEventLogPanel events={overlayState.multiplayerEvents} />
           </div>
       ) : null}
-        <div className="game-overlay__status-cluster">
-          {overlayState.vitals || overlayState.systems.length > 0 || overlayState.cloak ? (
-            <div className="game-overlay__ship-status">
-              <ShipStatusPanel
-                vitals={overlayState.vitals}
-                systems={overlayState.systems}
-              />
-            </div>
-          ) : null}
-        </div>
         {overlayState.systems.length > 0 || overlayState.cloak ? (
           <SystemPanelsRow
             systems={overlayState.systems}
@@ -308,53 +298,6 @@ function BriefingVisual(props: {
         </div>
       );
   }
-}
-
-function ShipStatusPanel(props: {
-  vitals: OverlayVitalsState | null;
-  systems: OverlaySystemPanelState[];
-}): ReactElement {
-  const { vitals, systems } = props;
-  const orderedSystems = [...systems].sort(compareSystemsByHotkey);
-  const focusedSystem = orderedSystems.find((system) => system.boosted) ?? null;
-  const focusedSystemKey = focusedSystem?.key ?? null;
-  const healthFraction = vitals && vitals.maxHealth > 0 ? vitals.health / vitals.maxHealth : 0;
-  const healthColor = healthFraction > 0.6 ? "#6ae78c" : healthFraction > 0.3 ? "#ffbd59" : "#ff7b72";
-  const focusedLabel = formatFocusedSystemLabel(focusedSystemKey);
-  const focusedBinding = focusedSystem?.hotkey ?? null;
-  const hullValueText = vitals
-    ? `${Math.round(vitals.health)} / ${Math.round(vitals.maxHealth)}`
-    : "N/A";
-
-  return (
-    <section
-      className="game-panel game-panel--ship-status"
-      style={{
-        ...createPanelStyle("#78e8ff"),
-        ["--vitals-health-color" as string]: healthColor,
-      }}
-    >
-      <div className="game-panel__badge">Ship Status</div>
-      <div className="game-vitals__focus-line">
-        Focus: <span className="game-vitals__focus-value">{focusedBinding ? `[${focusedBinding}] ${focusedLabel}` : focusedLabel}</span>
-      </div>
-      <div className="game-vitals__groups">
-        <div className="game-vitals__group game-vitals__group--health">
-          <div className="game-vitals__row">
-            <span className="game-vitals__label">Hull</span>
-            <span className="game-vitals__value">{hullValueText}</span>
-          </div>
-          <Meter
-            meter={{
-              value: healthFraction,
-              fillColor: healthColor,
-              backgroundColor: "#17202b",
-            }}
-          />
-        </div>
-      </div>
-    </section>
-  );
 }
 
 function SystemPanelsRow(props: {

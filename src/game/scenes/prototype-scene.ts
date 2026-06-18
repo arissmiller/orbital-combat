@@ -392,14 +392,12 @@ const MAP_KILL_BORDER_ARROW_DISTANCE = 540;
 const MAP_KILL_BORDER_ARROW_RADIUS = 190;
 const MAP_KILL_BORDER_STRIPE_OUTER_WIDTH = 340;
 const MAP_KILL_BORDER_STRIPE_INNER_OFFSET = 22;
-const FLIGHT_SYSTEM_CAMERA_PADDING = 180;
-const FLIGHT_SYSTEM_CAMERA_MIN_RADIUS = 620;
-const FLIGHT_SYSTEM_CAMERA_MAX_RADIUS = 2200;
-const FLIGHT_SYSTEM_CAMERA_BODY_MARGIN = 220;
-const FLIGHT_SYSTEM_CAMERA_DEFENSE_MARGIN = 180;
-const FLIGHT_SYSTEM_CAMERA_FORECAST_POINTS = 6;
-const FLIGHT_SYSTEM_CAMERA_SHIP_MARGIN = 180;
-const FLIGHT_SYSTEM_CAMERA_FORECAST_MARGIN = 140;
+const FLIGHT_CAMERA_PADDING = 180;
+const FLIGHT_CAMERA_SYSTEM_ANCHOR_STRENGTH = 0.3;
+const FLIGHT_CAMERA_PLAYER_MARGIN = 180;
+const FLIGHT_CAMERA_LOCAL_RADIUS_MIN = 260;
+const FLIGHT_CAMERA_LOCAL_RADIUS_MAX = 700;
+const FLIGHT_CAMERA_MAX_ZOOM = 0.78;
 
 interface PrototypeSceneOptions {
   includeTrainingMoon?: boolean;
@@ -2461,14 +2459,10 @@ export function mountPrototypeScene(
       elapsedSeconds,
       missiles: missileVisuals,
     });
-    const flightCameraFocusPoints = buildSystemFlightCameraFocusPoints({
+    const flightCameraFocusPoints = buildDualAnchorFlightCameraFocusPoints({
       shipPosition: interceptorPosition,
       shipSystemId: interceptorBody.systemId,
       celestialVisuals,
-      defenseVisuals,
-      coastPrediction,
-      currentBurnPrediction,
-      boostedPrediction,
     });
     const tacticalCameraFocusPoints = [
       interceptorPosition,
@@ -2495,9 +2489,9 @@ export function mountPrototypeScene(
       focusPoints: tacticalViewActive
         ? tacticalCameraFocusPoints
         : flightCameraFocusPoints,
-      padding: tacticalViewActive ? 520 : FLIGHT_SYSTEM_CAMERA_PADDING,
+      padding: tacticalViewActive ? 520 : FLIGHT_CAMERA_PADDING,
       minZoom: tacticalViewActive ? 0.06 : 0.22,
-      maxZoom: tacticalViewActive ? 1.1 : 1.22,
+      maxZoom: tacticalViewActive ? 1.1 : FLIGHT_CAMERA_MAX_ZOOM,
     });
     const nextCamera = updatePrototypeCamera({
       currentCenter: cameraCenter,
@@ -5088,87 +5082,34 @@ function findNearestBody(
   };
 }
 
-function buildSystemFlightCameraFocusPoints(options: {
+function buildDualAnchorFlightCameraFocusPoints(options: {
   shipPosition: Vector2Like;
   shipSystemId: string;
   celestialVisuals: readonly CelestialVisual[];
-  defenseVisuals: readonly DefenseVisual[];
-  coastPrediction: TrajectoryForecast;
-  currentBurnPrediction: TrajectoryForecast;
-  boostedPrediction: TrajectoryForecast;
 }): Vector2Like[] {
   const systemRoot = getSystemRoot(options.celestialVisuals, options.shipSystemId);
-  let systemRadius = systemRoot.body.radius + FLIGHT_SYSTEM_CAMERA_BODY_MARGIN;
-
-  for (const visual of options.celestialVisuals) {
-    if (visual.config.hidden || visual.config.systemId !== options.shipSystemId) {
-      continue;
-    }
-    systemRadius = Math.max(
-      systemRadius,
-      distanceBetween(systemRoot.body.position, visual.body.position)
-        + visual.body.radius
-        + FLIGHT_SYSTEM_CAMERA_BODY_MARGIN,
-    );
-  }
-
-  for (const defense of options.defenseVisuals) {
-    if (defense.body.systemId !== options.shipSystemId || defense.destroyed) {
-      continue;
-    }
-    systemRadius = Math.max(
-      systemRadius,
-      distanceBetween(systemRoot.body.position, defense.body.position)
-        + defense.config.radius
-        + FLIGHT_SYSTEM_CAMERA_DEFENSE_MARGIN,
-    );
-  }
-
-  systemRadius = Math.max(
-    systemRadius,
-    distanceBetween(systemRoot.body.position, options.shipPosition)
-      + FLIGHT_SYSTEM_CAMERA_SHIP_MARGIN,
-  );
-
-  const forecastDistances = [
-    ...options.coastPrediction.positions.slice(0, FLIGHT_SYSTEM_CAMERA_FORECAST_POINTS),
-    ...options.currentBurnPrediction.positions.slice(0, FLIGHT_SYSTEM_CAMERA_FORECAST_POINTS),
-    ...options.boostedPrediction.positions.slice(0, FLIGHT_SYSTEM_CAMERA_FORECAST_POINTS),
-  ]
-    .map((point) => distanceBetween(point, systemRoot.body.position))
-    .filter((distance) => Number.isFinite(distance));
-
-  for (const forecastDistance of forecastDistances) {
-    systemRadius = Math.max(
-      systemRadius,
-      forecastDistance + FLIGHT_SYSTEM_CAMERA_FORECAST_MARGIN,
-    );
-  }
-
-  const clampedSystemRadius = clamp(
-    systemRadius,
-    FLIGHT_SYSTEM_CAMERA_MIN_RADIUS,
-    FLIGHT_SYSTEM_CAMERA_MAX_RADIUS,
+  const blendedCenter = {
+    x:
+      options.shipPosition.x +
+      (systemRoot.body.position.x - options.shipPosition.x)
+        * FLIGHT_CAMERA_SYSTEM_ANCHOR_STRENGTH,
+    y:
+      options.shipPosition.y +
+      (systemRoot.body.position.y - options.shipPosition.y)
+        * FLIGHT_CAMERA_SYSTEM_ANCHOR_STRENGTH,
+  };
+  const zoomRadius = clamp(
+    distanceBetween(options.shipPosition, blendedCenter)
+      + FLIGHT_CAMERA_PLAYER_MARGIN,
+    FLIGHT_CAMERA_LOCAL_RADIUS_MIN,
+    FLIGHT_CAMERA_LOCAL_RADIUS_MAX,
   );
 
   return [
-    systemRoot.body.position,
-    {
-      x: systemRoot.body.position.x + clampedSystemRadius,
-      y: systemRoot.body.position.y,
-    },
-    {
-      x: systemRoot.body.position.x - clampedSystemRadius,
-      y: systemRoot.body.position.y,
-    },
-    {
-      x: systemRoot.body.position.x,
-      y: systemRoot.body.position.y + clampedSystemRadius,
-    },
-    {
-      x: systemRoot.body.position.x,
-      y: systemRoot.body.position.y - clampedSystemRadius,
-    },
+    { x: blendedCenter.x + zoomRadius, y: blendedCenter.y },
+    { x: blendedCenter.x - zoomRadius, y: blendedCenter.y },
+    { x: blendedCenter.x, y: blendedCenter.y + zoomRadius },
+    { x: blendedCenter.x, y: blendedCenter.y - zoomRadius },
   ];
 }
 

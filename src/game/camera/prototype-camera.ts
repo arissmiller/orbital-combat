@@ -1,8 +1,6 @@
 import type { Vector2Like } from "../physics/vector2";
 import type { SceneCameraOverride } from "../scenes/scene-camera";
 
-const FLIGHT_CAMERA_SHIP_BIAS = 0.58;
-
 export interface CameraFrame {
   center: Vector2Like;
   zoom: number;
@@ -78,16 +76,7 @@ export function updatePrototypeCamera(options: {
     ? activeSceneCameraOverride.center
     : options.tacticalViewActive
       ? options.cameraFrame.center
-      : {
-          x:
-            options.cameraFrame.center.x +
-            (options.shipPosition.x - options.cameraFrame.center.x)
-              * FLIGHT_CAMERA_SHIP_BIAS,
-          y:
-            options.cameraFrame.center.y +
-            (options.shipPosition.y - options.cameraFrame.center.y)
-              * FLIGHT_CAMERA_SHIP_BIAS,
-        };
+      : options.cameraFrame.center;
   const cameraTargetZoom = activeSceneCameraOverride
     ? activeSceneCameraOverride.zoom
     : options.cameraFrame.zoom;
